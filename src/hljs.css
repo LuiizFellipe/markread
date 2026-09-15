@@ -1,0 +1,157 @@
+/* Syntax highlighting colors for highlight.js, matching the GitHub palette
+   in both themes (github-markdown-css provides the code block chrome). */
+
+.hljs {
+  color: inherit;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #59636e;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag {
+  color: #cf222e;
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-meta .hljs-string {
+  color: #0a3069;
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: #0550ae;
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #8250df;
+}
+
+.hljs-title.class_,
+.hljs-type,
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-property,
+.hljs-params {
+  color: #953800;
+}
+
+.hljs-built_in,
+.hljs-builtin-name {
+  color: #0550ae;
+}
+
+.hljs-meta {
+  color: #0550ae;
+}
+
+.hljs-tag {
+  color: #116329;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+.hljs-deletion {
+  color: #82071e;
+  background-color: #ffebe9;
+}
+
+.hljs-addition {
+  background-color: #dafbe1;
+}
+
+/* ---------- dark ---------- */
+
+html[data-theme="dark"] .hljs-comment,
+html[data-theme="dark"] .hljs-quote {
+  color: #8b949e;
+}
+
+html[data-theme="dark"] .hljs-keyword,
+html[data-theme="dark"] .hljs-selector-tag,
+html[data-theme="dark"] .hljs-doctag,
+html[data-theme="dark"] .hljs-meta .hljs-keyword,
+html[data-theme="dark"] .hljs-template-tag {
+  color: #ff7b72;
+}
+
+html[data-theme="dark"] .hljs-string,
+html[data-theme="dark"] .hljs-regexp,
+html[data-theme="dark"] .hljs-addition,
+html[data-theme="dark"] .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+
+html[data-theme="dark"] .hljs-number,
+html[data-theme="dark"] .hljs-literal,
+html[data-theme="dark"] .hljs-symbol,
+html[data-theme="dark"] .hljs-bullet,
+html[data-theme="dark"] .hljs-link {
+  color: #79c0ff;
+}
+
+html[data-theme="dark"] .hljs-title,
+html[data-theme="dark"] .hljs-title.function_,
+html[data-theme="dark"] .hljs-section,
+html[data-theme="dark"] .hljs-name,
+html[data-theme="dark"] .hljs-selector-id,
+html[data-theme="dark"] .hljs-selector-class {
+  color: #d2a8ff;
+}
+
+html[data-theme="dark"] .hljs-title.class_,
+html[data-theme="dark"] .hljs-type,
+html[data-theme="dark"] .hljs-attr,
+html[data-theme="dark"] .hljs-attribute,
+html[data-theme="dark"] .hljs-variable,
+html[data-theme="dark"] .hljs-template-variable,
+html[data-theme="dark"] .hljs-property,
+html[data-theme="dark"] .hljs-params {
+  color: #ffa657;
+}
+
+html[data-theme="dark"] .hljs-built_in,
+html[data-theme="dark"] .hljs-builtin-name {
+  color: #79c0ff;
+}
+
+html[data-theme="dark"] .hljs-meta {
+  color: #79c0ff;
+}
+
+html[data-theme="dark"] .hljs-tag {
+  color: #7ee787;
+}
+
+html[data-theme="dark"] .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
+}
+
+html[data-theme="dark"] .hljs-addition {
+  background-color: #033a16;
+}

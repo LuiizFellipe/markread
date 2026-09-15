@@ -1,0 +1,16 @@
+export const dict = {
+  welcomeTitle: "MarkRead",
+  welcomeSubtitle: "A clean Markdown reader",
+  openFile: "Open File…",
+  dropHint: "Drop a .md file here, or press Ctrl+O",
+  recentFiles: "Recent Files",
+  clearRecent: "Clear",
+  noRecent: "No recent files",
+  outlineTitle: "Outline",
+  outlineEmpty: "No headings",
+  searchPlaceholder: "Find in document",
+  statusNoFile: "No file open",
+  statusWords: "{n} words",
+  statusReadingTime: "{m} min read",
+  errorOpenTitle: "Could not open file",
+};

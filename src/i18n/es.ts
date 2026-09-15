@@ -1,0 +1,16 @@
+export const dict: Record<string, string> = {
+  welcomeTitle: "MarkRead",
+  welcomeSubtitle: "Un lector de Markdown limpio y simple",
+  openFile: "Abrir archivo…",
+  dropHint: "Arrastra un archivo .md aquí, o presiona Ctrl+O",
+  recentFiles: "Archivos recientes",
+  clearRecent: "Limpiar",
+  noRecent: "Sin archivos recientes",
+  outlineTitle: "Índice",
+  outlineEmpty: "Sin encabezados",
+  searchPlaceholder: "Buscar en el documento",
+  statusNoFile: "Ningún archivo abierto",
+  statusWords: "{n} palabras",
+  statusReadingTime: "{m} min de lectura",
+  errorOpenTitle: "No se pudo abrir el archivo",
+};

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MarkRead</title>
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar" hidden>
+        <div class="sidebar-title" data-i18n="outlineTitle">Outline</div>
+        <nav id="outline" aria-label="Table of contents"></nav>
+      </aside>
+      <div id="content-wrap">
+        <div id="findbar" hidden>
+          <input
+            id="find-input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            data-i18n-placeholder="searchPlaceholder"
+          />
+          <span id="find-count"></span>
+          <button id="find-prev" class="icon-btn" title="Previous match (Shift+Enter)">&#8593;</button>
+          <button id="find-next" class="icon-btn" title="Next match (Enter)">&#8595;</button>
+          <button id="find-close" class="icon-btn" title="Close (Esc)">&#10005;</button>
+        </div>
+        <div id="scroll-pane">
+          <section id="welcome">
+            <div id="welcome-logo" aria-hidden="true">M&#8595;</div>
+            <h1 data-i18n="welcomeTitle">MarkRead</h1>
+            <p id="welcome-subtitle" data-i18n="welcomeSubtitle">A clean Markdown reader</p>
+            <button id="welcome-open" data-i18n="openFile">Open File&#8230;</button>
+            <p id="welcome-drop" data-i18n="dropHint">Drop a .md file here, or press Ctrl+O</p>
+            <div id="welcome-recent">
+              <div class="recent-header">
+                <span data-i18n="recentFiles">Recent Files</span>
+                <button id="clear-recent" class="link-btn" data-i18n="clearRecent" hidden>Clear</button>
+              </div>
+              <ul id="recent-list"></ul>
+              <p id="recent-empty" data-i18n="noRecent" hidden>No recent files</p>
+            </div>
+          </section>
+          <article id="markdown-body" class="markdown-body" hidden></article>
+        </div>
+      </div>
+    </div>
+    <footer id="statusbar">
+      <span id="status-file" data-i18n="statusNoFile">No file open</span>
+      <span id="status-meta"></span>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
