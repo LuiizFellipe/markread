@@ -2,7 +2,6 @@ use std::path::Path;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
-use tauri_plugin_dialog::DialogExt;
 
 use crate::{commands, settings};
 
@@ -199,7 +198,7 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
         if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-            window.set_menu(Some(menu))?;
+            window.set_menu(menu)?;
         }
     }
     Ok(())

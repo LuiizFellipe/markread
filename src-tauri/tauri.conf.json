@@ -46,33 +46,27 @@
     ],
     "fileAssociations": [
       {
-        "ext": "md",
+        "ext": ["md", "markdown", "mdown", "mkd"],
         "name": "Markdown document",
         "description": "Markdown document",
         "mimeType": "text/markdown",
         "role": "Viewer"
       },
       {
-        "ext": "markdown",
+        "ext": ["md", "markdown", "mdown", "mkd"],
         "name": "Markdown document",
         "description": "Markdown document",
-        "mimeType": "text/markdown",
-        "role": "Viewer"
-      },
-      {
-        "ext": "mdown",
-        "name": "Markdown document",
-        "description": "Markdown document",
-        "mimeType": "text/markdown",
-        "role": "Viewer"
-      },
-      {
-        "ext": "mkd",
-        "name": "Markdown document",
-        "description": "Markdown document",
-        "mimeType": "text/markdown",
+        "mimeType": "text/x-markdown",
         "role": "Viewer"
       }
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "./desktop-entry.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "./desktop-entry.desktop"
+      }
+    }
   }
 }
