@@ -2,7 +2,7 @@
 
 A clean, fast Markdown reader for **Linux**, **macOS** and **Windows**, built with [Tauri v2](https://v2.tauri.app).
 
-![CI](https://github.com/YOUR_USERNAME/markread/actions/workflows/build.yml/badge.svg)
+![CI](https://github.com/LuiizFellipe/markread/actions/workflows/build.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 MarkRead registers itself as a viewer for `.md` / `.markdown` / `.mdown` / `.mkd`
