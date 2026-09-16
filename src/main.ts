@@ -2,13 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { message, open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { ask, message, open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./app.css";
 import "github-markdown-css/github-markdown-light.css";
 import darkGithubCss from "github-markdown-css/github-markdown-dark.css?raw";
 import { applyI18n, detectLanguage, setLanguage, t, type Lang } from "./i18n";
 import { enhanceRendered, renderMarkdown } from "./renderer";
-import { initSearch } from "./search";
+import { initSearch, resetSearch } from "./search";
 import {
   collectHeadings,
   initScrollSpy,
@@ -52,6 +52,7 @@ const findInput = $<HTMLInputElement>("#find-input");
 const findCount = $<HTMLElement>("#find-count");
 const scrollPane = $<HTMLElement>("#scroll-pane");
 const bodyEl = $<HTMLElement>("#markdown-body");
+const editorEl = $<HTMLTextAreaElement>("#editor");
 const welcome = $<HTMLElement>("#welcome");
 const welcomeOpen = $<HTMLButtonElement>("#welcome-open");
 const recentList = $<HTMLUListElement>("#recent-list");
@@ -65,6 +66,9 @@ const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings);
 
 let headings: Heading[] = [];
 let currentFile: FileInfo | null = null;
+let isEditing = false;
+let isDirty = false;
+let fileUsesCrlf = false;
 
 /* ---------- zoom ---------- */
 
@@ -104,12 +108,14 @@ function updateStatus(): void {
   }
   statusFile.textContent = currentFile.name;
   statusFile.title = currentFile.path;
-  const words = countWords(currentFile.content);
-  statusMeta.textContent = [
+  const words = countWords(isEditing ? editorEl.value : currentFile.content);
+  const meta = [
     t("statusWords", { n: words.toLocaleString() }),
     t("statusReadingTime", { m: readingMinutes(words) }),
     formatBytes(currentFile.size),
-  ].join(" · ");
+  ];
+  if (isDirty) meta.unshift(t("statusUnsaved"));
+  statusMeta.textContent = meta.join(" · ");
 }
 
 /* ---------- document display ---------- */
@@ -127,9 +133,97 @@ async function showError(err: unknown): Promise<void> {
   await message(String(err), { title: t("errorOpenTitle"), kind: "error" });
 }
 
+/* ---------- editing ---------- */
+
+function updateWindowTitle(): void {
+  if (!inTauri || !currentFile) return;
+  const dirtyMark = isDirty ? "• " : "";
+  void getCurrentWindow()
+    .setTitle(`${dirtyMark}${currentFile.name} — MarkRead`)
+    .catch(() => {});
+}
+
+function markDirty(): void {
+  if (!isDirty) {
+    isDirty = true;
+    updateWindowTitle();
+  }
+  updateStatus();
+}
+
+/** Whether pending edits may be discarded (false = cancel the action). */
+async function confirmDiscardChanges(): Promise<boolean> {
+  if (!isDirty || !inTauri) return true;
+  return ask(t("unsavedMessage"), {
+    title: t("unsavedTitle"),
+    kind: "warning",
+  });
+}
+
+/** Textareas normalize CRLF to LF; map edited text back to the endings the
+ *  file had on disk so saving stays byte-faithful for Windows files. */
+function applyFileLineEndings(value: string): string {
+  return value.replaceAll(/\r?\n/g, fileUsesCrlf ? "\r\n" : "\n");
+}
+
+function enterEditMode(): void {
+  if (!currentFile) return;
+  resetSearch(search);
+  isEditing = true;
+  editorEl.value = currentFile.content;
+  welcome.hidden = true;
+  bodyEl.hidden = true;
+  editorEl.hidden = false;
+  editorEl.focus();
+  updateStatus();
+}
+
+function exitEditMode(): void {
+  if (!isEditing || !currentFile) return;
+  isEditing = false;
+  editorEl.hidden = true;
+  currentFile.content = applyFileLineEndings(editorEl.value);
+  bodyEl.innerHTML = renderMarkdown(currentFile.content);
+  enhanceRendered(bodyEl, currentFile.dir, {
+    onOpenMarkdownFile: (p) => void openPath(p),
+  });
+  headings = collectHeadings(bodyEl);
+  renderOutline(outlineEl, headings, t("outlineEmpty"));
+  updateScrollSpy();
+  showDocument();
+  updateStatus();
+}
+
+async function saveFile(): Promise<void> {
+  if (!currentFile) return;
+  const content = isEditing
+    ? applyFileLineEndings(editorEl.value)
+    : currentFile.content;
+  currentFile.content = content;
+  if (!inTauri) return;
+  try {
+    const file = await invoke<FileInfo>("write_markdown_file", {
+      path: currentFile.path,
+      content,
+    });
+    currentFile = file;
+    isDirty = false;
+    updateWindowTitle();
+    updateStatus();
+  } catch (err) {
+    await message(String(err), { title: t("saveErrorTitle"), kind: "error" });
+  }
+}
+
 async function openPath(path: string): Promise<void> {
+  if (!(await confirmDiscardChanges())) return;
   try {
     const file = await invoke<FileInfo>("read_markdown_file", { path });
+    isEditing = false;
+    isDirty = false;
+    editorEl.hidden = true;
+    editorEl.value = "";
+    fileUsesCrlf = file.content.includes("\r\n");
     currentFile = file;
     bodyEl.innerHTML = renderMarkdown(file.content);
     enhanceRendered(bodyEl, file.dir, { onOpenMarkdownFile: (p) => void openPath(p) });
@@ -224,6 +318,13 @@ async function setupListeners(): Promise<void> {
       case "open":
         void runOpenDialog();
         break;
+      case "edit":
+        if (isEditing) exitEditMode();
+        else enterEditMode();
+        break;
+      case "save":
+        void saveFile();
+        break;
       case "find":
         if (!bodyEl.hidden) search.open();
         break;
@@ -255,6 +356,15 @@ async function setupListeners(): Promise<void> {
   });
 
   if (inTauri) {
+    await getCurrentWindow().onCloseRequested(async (event) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      if (await confirmDiscardChanges()) {
+        isDirty = false;
+        await getCurrentWindow().destroy();
+      }
+    });
+
     const webview = getCurrentWebview();
     await webview.onDragDropEvent((event) => {
       const type = event.payload.type;
@@ -285,6 +395,13 @@ function setupBrowserShortcuts(): void {
     } else if (ev.key === "f" && !bodyEl.hidden) {
       ev.preventDefault();
       search.open();
+    } else if (ev.key === "e" && currentFile) {
+      ev.preventDefault();
+      if (isEditing) exitEditMode();
+      else enterEditMode();
+    } else if (ev.key === "s" && currentFile) {
+      ev.preventDefault();
+      void saveFile();
     } else if (ev.key === "=" || ev.key === "+") {
       ev.preventDefault();
       changeZoom(0.1);
@@ -324,6 +441,23 @@ async function boot(): Promise<void> {
   welcomeOpen.addEventListener("click", () => void runOpenDialog());
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
+  });
+
+  editorEl.addEventListener("input", markDirty);
+  editorEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "Tab") {
+      ev.preventDefault();
+      editorEl.setRangeText(
+        "\t",
+        editorEl.selectionStart,
+        editorEl.selectionEnd,
+        "end",
+      );
+      markDirty();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      exitEditMode();
+    }
   });
 
   if (!inTauri) setupBrowserShortcuts();
