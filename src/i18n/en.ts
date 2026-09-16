@@ -10,7 +10,11 @@ export const dict = {
   outlineEmpty: "No headings",
   searchPlaceholder: "Find in document",
   statusNoFile: "No file open",
+  statusUnsaved: "unsaved changes",
   statusWords: "{n} words",
   statusReadingTime: "{m} min read",
   errorOpenTitle: "Could not open file",
+  saveErrorTitle: "Could not save file",
+  unsavedTitle: "Unsaved changes",
+  unsavedMessage: "You have unsaved changes. Discard them?",
 };

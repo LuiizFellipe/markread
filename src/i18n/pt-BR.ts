@@ -10,7 +10,11 @@ export const dict: Record<string, string> = {
   outlineEmpty: "Sem títulos",
   searchPlaceholder: "Localizar no documento",
   statusNoFile: "Nenhum arquivo aberto",
+  statusUnsaved: "alterações não salvas",
   statusWords: "{n} palavras",
   statusReadingTime: "{m} min de leitura",
   errorOpenTitle: "Não foi possível abrir o arquivo",
+  saveErrorTitle: "Não foi possível salvar o arquivo",
+  unsavedTitle: "Alterações não salvas",
+  unsavedMessage: "Você tem alterações não salvas. Descartá-las?",
 };

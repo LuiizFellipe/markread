@@ -50,7 +50,7 @@
         "name": "Markdown document",
         "description": "Markdown document",
         "mimeType": "text/markdown",
-        "role": "Viewer"
+        "role": "Editor"
       }
     ],
     "linux": {

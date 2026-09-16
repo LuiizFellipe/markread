@@ -44,6 +44,16 @@ pub fn read_markdown_file(path: String) -> Result<FileInfo, String> {
 }
 
 #[tauri::command]
+pub fn write_markdown_file(path: String, content: String) -> Result<FileInfo, String> {
+    let file_path = PathBuf::from(&path);
+    if !has_markdown_ext(&file_path) {
+        return Err(format!("not a markdown file: {path}"));
+    }
+    fs::write(&file_path, content.as_bytes()).map_err(|e| e.to_string())?;
+    read_markdown_file(path)
+}
+
+#[tauri::command]
 pub fn get_recent_files(app: AppHandle) -> Vec<String> {
     settings::load(&app)
         .recent_files
