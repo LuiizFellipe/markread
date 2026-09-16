@@ -193,7 +193,7 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        app.set_menu(Some(menu))?;
+        app.set_menu(menu)?;
     }
     #[cfg(not(target_os = "macos"))]
     {

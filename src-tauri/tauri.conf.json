@@ -51,13 +51,6 @@
         "description": "Markdown document",
         "mimeType": "text/markdown",
         "role": "Viewer"
-      },
-      {
-        "ext": ["md", "markdown", "mdown", "mkd"],
-        "name": "Markdown document",
-        "description": "Markdown document",
-        "mimeType": "text/x-markdown",
-        "role": "Viewer"
       }
     ],
     "linux": {
