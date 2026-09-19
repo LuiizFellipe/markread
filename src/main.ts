@@ -17,6 +17,7 @@ import {
 } from "./outline";
 import { initTheme, setThemePreference, type ThemePreference } from "./theme";
 import { countWords, formatBytes, readingMinutes } from "./status";
+import { renderMermaidBlocks } from "./mermaid";
 import {
   captureScroll,
   restoreScroll,
@@ -76,6 +77,7 @@ let currentFile: FileInfo | null = null;
 let isEditing = false;
 let isDirty = false;
 let fileUsesCrlf = false;
+let hasMermaid = false;
 
 /* ---------- zoom ---------- */
 
@@ -139,6 +141,7 @@ async function renderDocument(content: string, dir: string): Promise<void> {
   enhanceRendered(bodyEl, dir, {
     onOpenMarkdownFile: (p) => void openPath(p),
   });
+  hasMermaid = await renderMermaidBlocks(bodyEl);
   headings = collectHeadings(bodyEl);
   renderOutline(outlineEl, headings, t("outlineEmpty"));
   updateScrollSpy();
@@ -498,8 +501,14 @@ async function setupListeners(): Promise<void> {
     }
   });
 
-  await listen<string>("theme-changed", (event) => {
+  await listen<string>("theme-changed", async (event) => {
     setThemePreference(event.payload as ThemePreference);
+    // Mermaid diagrams bake the palette in at render time.
+    if (hasMermaid && currentFile && !isEditing) {
+      const snapshot = currentScrollSnapshot();
+      await renderDocument(currentFile.content, currentFile.dir);
+      restoreScroll(scrollPane, snapshot);
+    }
   });
 
   await listen<string>("language-changed", (event) => {

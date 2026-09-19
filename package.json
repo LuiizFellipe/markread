@@ -14,15 +14,18 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@mdit/plugin-katex": "^0.25.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "dompurify": "^3",
     "github-markdown-css": "^5",
     "highlight.js": "^11",
+    "katex": "^0.18.7",
     "markdown-it": "^14",
     "markdown-it-anchor": "^9",
-    "markdown-it-task-lists": "^2"
+    "markdown-it-task-lists": "^2",
+    "mermaid": "^12.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

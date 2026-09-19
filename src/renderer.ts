@@ -7,42 +7,69 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { t } from "./i18n";
 import "./hljs.css";
+import "katex/dist/katex.min.css";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".mdown", ".mkd"];
 
-const md: MarkdownIt = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  highlight(code: string, lang: string): string {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return `<pre><code class="hljs language-${md.utils.escapeHtml(lang)}">${
-          hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
-        }</code></pre>`;
-      } catch {
-        /* fall through to auto-detection */
-      }
-    }
-    const auto = lang ? "" : hljs.highlightAuto(code).value;
-    const value = lang ? md.utils.escapeHtml(code) : auto;
-    return `<pre><code class="hljs">${value}</code></pre>`;
-  },
-});
+/** Cheap gate for lazy-loading the KaTeX chunk: anything that looks like it
+ *  might contain math. The plugin's own rules decide what actually renders. */
+const MATH_HINT = /\$\$|\$[^\s$](?:[^$\n]*[^\s$])?\$|\\\(|\\\[/;
 
-md.use(anchor, {
-  slugify: (s: string) =>
-    s
-      .trim()
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-      .replace(/\s+/g, "-"),
-});
-md.use(taskLists, { enabled: false, label: true });
+function createMarkdownIt(): MarkdownIt {
+  const instance: MarkdownIt = new MarkdownIt({
+    html: true,
+    linkify: true,
+    typographer: true,
+    highlight(code: string, lang: string): string {
+      const cls = lang ? ` language-${instance.utils.escapeHtml(lang)}` : "";
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          return `<pre><code class="hljs${cls}">${
+            hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+          }</code></pre>`;
+        } catch {
+          /* fall through to auto-detection */
+        }
+      }
+      const auto = lang ? "" : hljs.highlightAuto(code).value;
+      const value = lang ? instance.utils.escapeHtml(code) : auto;
+      return `<pre><code class="hljs${cls}">${value}</code></pre>`;
+    },
+  });
+
+  instance.use(anchor, {
+    slugify: (s: string) =>
+      s
+        .trim()
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+        .replace(/\s+/g, "-"),
+  });
+  instance.use(taskLists, { enabled: false, label: true });
+  return instance;
+}
+
+const md: MarkdownIt = createMarkdownIt();
+
+// The KaTeX plugin (and its ~1.5 MB of rendered-math machinery) is only
+// imported when the document actually looks like it contains math.
+let mathRendererPromise: Promise<MarkdownIt> | null = null;
+
+function ensureMathRenderer(): Promise<MarkdownIt> {
+  mathRendererPromise ??= import("@mdit/plugin-katex").then(({ katex }) => {
+    const mdMath = createMarkdownIt();
+    // Default (dollars) delimiters: $inline$ and $$block$$. The \( \) bracket
+    // syntax is not supported by plugin-tex 0.24.x (escape rule wins first).
+    mdMath.use(katex);
+    return mdMath;
+  });
+  return mathRendererPromise;
+}
 
 /** Markdown source → sanitized HTML string. */
-export function renderMarkdown(source: string): string {
-  const raw = md.render(source);
+export async function renderMarkdown(source: string): Promise<string> {
+  const renderer = MATH_HINT.test(source) ? await ensureMathRenderer() : md;
+  const raw = renderer.render(source);
   return DOMPurify.sanitize(raw, {
     FORBID_TAGS: ["style"],
     ADD_ATTR: ["target", "checked", "disabled", "align"],
