@@ -482,7 +482,7 @@ function setSidebarTab(tab: "outline" | "files"): void {
   tabOutline.classList.toggle("active", outlineActive);
   tabFiles.classList.toggle("active", !outlineActive);
   outlineEl.classList.toggle("tab-hidden", !outlineActive);
-  filesPane.hidden = !outlineActive;
+  filesPane.hidden = outlineActive;
   localStorage.setItem(SIDEBAR_TAB_KEY, tab);
 }
 
