@@ -477,3 +477,46 @@ body.dragging-file::after {
   pointer-events: none;
   z-index: 999;
 }
+
+/* ---------- Print / export PDF ---------- */
+
+@media print {
+  @page {
+    margin: 15mm;
+  }
+
+  #sidebar,
+  #statusbar,
+  #findbar,
+  #editor,
+  #welcome,
+  #reading-progress,
+  #back-to-top,
+  .code-copy-btn,
+  body.dragging-file::after {
+    display: none !important;
+  }
+
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: #ffffff;
+    color: #1f2328;
+  }
+
+  #app,
+  #content-wrap {
+    display: block;
+  }
+
+  #scroll-pane {
+    overflow: visible;
+    height: auto;
+  }
+
+  #markdown-body {
+    max-width: none;
+    padding: 0;
+  }
+}

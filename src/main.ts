@@ -433,6 +433,31 @@ function toggleSidebar(): void {
   localStorage.setItem(OUTLINE_KEY, sidebar.hidden ? "0" : "1");
 }
 
+/* ---------- print / export PDF ---------- */
+
+let printCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+
+function printDocument(): void {
+  if (bodyEl.hidden || !currentFile) return;
+  // Print always on the light palette: temporarily drop the dark theme
+  // (the dark github-markdown stylesheet is scoped to html[data-theme]).
+  const root = document.documentElement;
+  const wasDark = root.getAttribute("data-theme") === "dark";
+  const restore = () => {
+    if (printCleanupTimer) {
+      clearTimeout(printCleanupTimer);
+      printCleanupTimer = null;
+    }
+    window.removeEventListener("afterprint", restore);
+    if (wasDark) root.setAttribute("data-theme", "dark");
+  };
+  window.addEventListener("afterprint", restore);
+  // Fallback for webviews that never fire afterprint.
+  printCleanupTimer = setTimeout(restore, 60_000);
+  if (wasDark) root.removeAttribute("data-theme");
+  window.print();
+}
+
 /* ---------- events from the Rust side ---------- */
 
 async function setupListeners(): Promise<void> {
@@ -450,6 +475,9 @@ async function setupListeners(): Promise<void> {
         break;
       case "save":
         void saveFile();
+        break;
+      case "print":
+        printDocument();
         break;
       case "find":
         if (!bodyEl.hidden) search.open();
@@ -530,6 +558,9 @@ function setupBrowserShortcuts(): void {
     } else if (ev.key === "s" && currentFile) {
       ev.preventDefault();
       void saveFile();
+    } else if (ev.key === "p") {
+      ev.preventDefault();
+      printDocument();
     } else if (ev.key === "=" || ev.key === "+") {
       ev.preventDefault();
       changeZoom(0.1);

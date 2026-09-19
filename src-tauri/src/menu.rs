@@ -13,6 +13,7 @@ struct Labels {
     open: &'static str,
     edit: &'static str,
     save: &'static str,
+    print: &'static str,
     open_recent: &'static str,
     no_recent: &'static str,
     quit: &'static str,
@@ -38,6 +39,7 @@ fn labels(lang: &str) -> Labels {
             open: "Abrir…",
             edit: "Editar",
             save: "Salvar",
+            print: "Imprimir…",
             open_recent: "Abrir recente",
             no_recent: "Nenhum arquivo recente",
             quit: "Sair",
@@ -61,6 +63,7 @@ fn labels(lang: &str) -> Labels {
             open: "Abrir…",
             edit: "Editar",
             save: "Guardar",
+            print: "Imprimir…",
             open_recent: "Abrir reciente",
             no_recent: "Sin archivos recientes",
             quit: "Salir",
@@ -84,6 +87,7 @@ fn labels(lang: &str) -> Labels {
             open: "Open…",
             edit: "Edit",
             save: "Save",
+            print: "Print…",
             open_recent: "Open Recent",
             no_recent: "No Recent Files",
             quit: "Quit",
@@ -145,8 +149,10 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
     file_menu.append(&PredefinedMenuItem::separator(app)?)?;
     let edit_item = MenuItem::with_id(app, "edit", l.edit, true, Some("CmdOrCtrl+E"))?;
     let save_item = MenuItem::with_id(app, "save", l.save, true, Some("CmdOrCtrl+S"))?;
+    let print_item = MenuItem::with_id(app, "print", l.print, true, Some("CmdOrCtrl+P"))?;
     file_menu.append(&edit_item)?;
     file_menu.append(&save_item)?;
+    file_menu.append(&print_item)?;
     file_menu.append(&PredefinedMenuItem::separator(app)?)?;
     file_menu.append(&recent_menu)?;
     #[cfg(not(target_os = "macos"))]
