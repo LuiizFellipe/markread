@@ -8,8 +8,26 @@
   <body>
     <div id="app">
       <aside id="sidebar" hidden>
-        <div class="sidebar-title" data-i18n="outlineTitle">Outline</div>
+        <div id="sidebar-tabs" role="tablist">
+          <button id="tab-outline" class="sidebar-tab active" data-i18n="outlineTitle">Outline</button>
+          <button id="tab-files" class="sidebar-tab" data-i18n="filesTitle">Files</button>
+        </div>
         <nav id="outline" aria-label="Table of contents"></nav>
+        <div id="files-pane" hidden>
+          <div id="files-header">
+            <button id="open-folder-btn" class="files-open-btn" data-i18n="openFolder">Open Folder&#8230;</button>
+            <div id="folder-name" hidden></div>
+          </div>
+          <input
+            id="folder-search"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            hidden
+            data-i18n-placeholder="searchFolderPlaceholder"
+          />
+          <nav id="file-list"></nav>
+        </div>
       </aside>
       <div id="content-wrap">
         <div id="findbar" hidden>
@@ -32,6 +50,7 @@
             <h1 data-i18n="welcomeTitle">MarkRead</h1>
             <p id="welcome-subtitle" data-i18n="welcomeSubtitle">A clean Markdown reader</p>
             <button id="welcome-open" data-i18n="openFile">Open File&#8230;</button>
+            <button id="welcome-folder" class="welcome-secondary" data-i18n="openFolder">Open Folder&#8230;</button>
             <p id="welcome-drop" data-i18n="dropHint">Drop a .md file here, or press Ctrl+O</p>
             <div id="welcome-recent">
               <div class="recent-header">

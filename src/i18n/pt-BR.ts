@@ -22,4 +22,10 @@ export const dict: Record<string, string> = {
   copyCode: "Copiar",
   copiedCode: "Copiado!",
   backToTop: "Voltar ao topo",
+  filesTitle: "Arquivos",
+  openFolder: "Abrir pasta…",
+  searchFolderPlaceholder: "Buscar na pasta",
+  searchNoResults: "Nenhum resultado",
+  searchResultsCount: "{n} resultados",
+  folderTruncated: "Lista truncada (muitos arquivos)",
 };

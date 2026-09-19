@@ -68,6 +68,14 @@ const statusFile = $<HTMLElement>("#status-file");
 const statusMeta = $<HTMLElement>("#status-meta");
 const progressEl = $<HTMLElement>("#reading-progress");
 const backToTop = $<HTMLButtonElement>("#back-to-top");
+const tabOutline = $<HTMLButtonElement>("#tab-outline");
+const tabFiles = $<HTMLButtonElement>("#tab-files");
+const filesPane = $<HTMLElement>("#files-pane");
+const openFolderBtn = $<HTMLButtonElement>("#open-folder-btn");
+const folderNameEl = $<HTMLElement>("#folder-name");
+const folderSearchInput = $<HTMLInputElement>("#folder-search");
+const fileListEl = $<HTMLElement>("#file-list");
+const welcomeFolder = $<HTMLButtonElement>("#welcome-folder");
 
 const search = initSearch(bodyEl, findbar, findInput, findCount);
 const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings);
@@ -78,6 +86,35 @@ let isEditing = false;
 let isDirty = false;
 let fileUsesCrlf = false;
 let hasMermaid = false;
+
+interface FileEntry {
+  path: string;
+  name: string;
+  relPath: string;
+  size: number;
+}
+
+interface FolderListing {
+  dir: string;
+  files: FileEntry[];
+  truncated: boolean;
+}
+
+interface SearchHit {
+  path: string;
+  name: string;
+  line: number;
+  text: string;
+}
+
+interface FolderSearchResults {
+  hits: SearchHit[];
+  truncated: boolean;
+}
+
+let workspaceDir: string | null = null;
+let folderListing: FolderListing | null = null;
+let folderSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 /* ---------- zoom ---------- */
 
@@ -360,6 +397,7 @@ async function openPath(path: string): Promise<void> {
       await getCurrentWindow().setTitle(`${file.name} — MarkRead`);
       await invoke("push_recent_file", { path });
       void refreshRecents();
+      highlightActiveFile();
       try {
         await invoke("watch_file", { path });
       } catch {
@@ -426,6 +464,7 @@ async function runOpenDialog(): Promise<void> {
 /* ---------- sidebar ---------- */
 
 const OUTLINE_KEY = "markread.outline";
+const SIDEBAR_TAB_KEY = "markread.sidebar-tab";
 
 function applySidebarPreference(): void {
   sidebar.hidden = localStorage.getItem(OUTLINE_KEY) !== "1";
@@ -434,6 +473,133 @@ function applySidebarPreference(): void {
 function toggleSidebar(): void {
   sidebar.hidden = !sidebar.hidden;
   localStorage.setItem(OUTLINE_KEY, sidebar.hidden ? "0" : "1");
+}
+
+/* ---------- folder mode (light workspace) ---------- */
+
+function setSidebarTab(tab: "outline" | "files"): void {
+  const outlineActive = tab === "outline";
+  tabOutline.classList.toggle("active", outlineActive);
+  tabFiles.classList.toggle("active", !outlineActive);
+  outlineEl.classList.toggle("tab-hidden", !outlineActive);
+  filesPane.hidden = !outlineActive;
+  localStorage.setItem(SIDEBAR_TAB_KEY, tab);
+}
+
+async function openFolderDialog(): Promise<void> {
+  const dir = inTauri
+    ? await openFileDialog({ directory: true, multiple: false })
+    : null;
+  if (typeof dir === "string") await openFolder(dir, { reveal: true });
+}
+
+async function openFolder(
+  dir: string,
+  { reveal = false }: { reveal?: boolean } = {},
+): Promise<void> {
+  try {
+    const listing = await invoke<FolderListing>("list_markdown_files", { dir });
+    workspaceDir = listing.dir;
+    folderListing = listing;
+    folderNameEl.textContent = splitPath(listing.dir).name;
+    folderNameEl.title = listing.dir;
+    folderNameEl.hidden = false;
+    folderSearchInput.hidden = false;
+    folderSearchInput.value = "";
+    renderFileList(listing);
+    if (inTauri) void invoke("set_last_folder", { path: listing.dir }).catch(() => {});
+    setSidebarTab("files");
+    if (reveal) {
+      sidebar.hidden = false;
+      localStorage.setItem(OUTLINE_KEY, "1");
+    }
+  } catch (err) {
+    await showError(err);
+  }
+}
+
+function renderFileList(listing: FolderListing): void {
+  fileListEl.innerHTML = "";
+
+  const rootName = splitPath(listing.dir).name;
+  let currentFolder: string | null = null;
+  for (const file of listing.files) {
+    const lastSlash = file.relPath.lastIndexOf("/");
+    const folder = lastSlash === -1 ? "" : file.relPath.slice(0, lastSlash);
+    if (folder !== currentFolder) {
+      currentFolder = folder;
+      const header = document.createElement("div");
+      header.className = "file-folder-header";
+      header.textContent = folder === "" ? rootName : `${rootName}/${folder}`;
+      fileListEl.appendChild(header);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.path = file.path;
+    btn.textContent = file.name;
+    btn.title = file.relPath;
+    btn.addEventListener("click", () => void openPath(file.path));
+    fileListEl.appendChild(btn);
+  }
+
+  if (listing.truncated) {
+    const note = document.createElement("div");
+    note.className = "file-list-note";
+    note.textContent = t("folderTruncated");
+    fileListEl.appendChild(note);
+  }
+  highlightActiveFile();
+}
+
+function renderSearchResults(results: FolderSearchResults): void {
+  fileListEl.innerHTML = "";
+  for (const hit of results.hits) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "file-hit";
+    btn.dataset.path = hit.path;
+    const snippet = document.createElement("span");
+    snippet.className = "hit-snippet";
+    snippet.textContent = hit.text;
+    btn.replaceChildren(`${hit.name} · L${hit.line}`, snippet);
+    btn.title = hit.text;
+    btn.addEventListener("click", () => void openPath(hit.path));
+    fileListEl.appendChild(btn);
+  }
+
+  const note = document.createElement("div");
+  note.className = "file-list-note";
+  note.textContent =
+    results.hits.length === 0
+      ? t("searchNoResults")
+      : t("searchResultsCount", { n: String(results.hits.length) }) +
+        (results.truncated ? "+" : "");
+  fileListEl.appendChild(note);
+  highlightActiveFile();
+}
+
+function highlightActiveFile(): void {
+  if (!currentFile) return;
+  const active = currentFile.path.toLowerCase();
+  fileListEl.querySelectorAll("button[data-path]").forEach((el) => {
+    const btn = el as HTMLButtonElement;
+    btn.classList.toggle("active", btn.dataset.path?.toLowerCase() === active);
+  });
+}
+
+function runFolderSearch(): void {
+  if (!workspaceDir || !folderListing) return;
+  const query = folderSearchInput.value.trim();
+  if (!query) {
+    renderFileList(folderListing);
+    return;
+  }
+  void invoke<FolderSearchResults>("search_markdown_files", {
+    dir: workspaceDir,
+    query,
+  })
+    .then(renderSearchResults)
+    .catch(() => {});
 }
 
 /* ---------- print / export PDF ---------- */
@@ -471,6 +637,9 @@ async function setupListeners(): Promise<void> {
     switch (event.payload) {
       case "open":
         void runOpenDialog();
+        break;
+      case "open-folder":
+        void openFolderDialog();
         break;
       case "edit":
         if (isEditing) exitEditMode();
@@ -531,12 +700,17 @@ async function setupListeners(): Promise<void> {
     });
 
     const webview = getCurrentWebview();
-    await webview.onDragDropEvent((event) => {
+    await webview.onDragDropEvent(async (event) => {
       const type = event.payload.type;
       if (type === "enter" || type === "over") {
         document.body.classList.add("dragging-file");
       } else if (type === "drop") {
         document.body.classList.remove("dragging-file");
+        const firstPath = event.payload.paths[0];
+        if (firstPath && (await invoke<boolean>("path_is_dir", { path: firstPath }).catch(() => false))) {
+          void openFolder(firstPath, { reveal: true });
+          return;
+        }
         const mdFile = event.payload.paths.find((p) =>
           /\.(md|markdown|mdown|mkd)$/i.test(p),
         );
@@ -607,10 +781,19 @@ async function boot(): Promise<void> {
   await refreshRecents();
 
   welcomeOpen.addEventListener("click", () => void runOpenDialog());
+  welcomeFolder.addEventListener("click", () => void openFolderDialog());
+  openFolderBtn.addEventListener("click", () => void openFolderDialog());
+  tabOutline.addEventListener("click", () => setSidebarTab("outline"));
+  tabFiles.addEventListener("click", () => setSidebarTab("files"));
+  folderSearchInput.addEventListener("input", () => {
+    if (folderSearchTimer) clearTimeout(folderSearchTimer);
+    folderSearchTimer = setTimeout(runFolderSearch, 300);
+  });
   backToTop.addEventListener("click", () => {
     scrollPane.scrollTo({ top: 0, behavior: "smooth" });
   });
   backToTop.title = t("backToTop");
+  setSidebarTab(localStorage.getItem(SIDEBAR_TAB_KEY) === "files" ? "files" : "outline");
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
   });
@@ -664,6 +847,12 @@ async function boot(): Promise<void> {
     try {
       const pending = await invoke<string | null>("take_pending_file");
       if (pending) await openPath(pending);
+    } catch (err) {
+      console.error(err);
+    }
+    try {
+      const settings = await invoke<{ lastFolder: string | null }>("get_settings");
+      if (settings.lastFolder) await openFolder(settings.lastFolder);
     } catch (err) {
       console.error(err);
     }

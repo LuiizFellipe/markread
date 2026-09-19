@@ -11,6 +11,7 @@ const MAIN_WINDOW: &str = "main";
 struct Labels {
     file: &'static str,
     open: &'static str,
+    open_folder: &'static str,
     edit: &'static str,
     save: &'static str,
     print: &'static str,
@@ -37,6 +38,7 @@ fn labels(lang: &str) -> Labels {
         Labels {
             file: "Arquivo",
             open: "Abrir…",
+            open_folder: "Abrir pasta…",
             edit: "Editar",
             save: "Salvar",
             print: "Imprimir…",
@@ -61,6 +63,7 @@ fn labels(lang: &str) -> Labels {
         Labels {
             file: "Archivo",
             open: "Abrir…",
+            open_folder: "Abrir carpeta…",
             edit: "Editar",
             save: "Guardar",
             print: "Imprimir…",
@@ -85,6 +88,7 @@ fn labels(lang: &str) -> Labels {
         Labels {
             file: "File",
             open: "Open…",
+            open_folder: "Open Folder…",
             edit: "Edit",
             save: "Save",
             print: "Print…",
@@ -116,6 +120,13 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
 
     let open_item =
         MenuItem::with_id(app, "open", l.open, true, Some("CmdOrCtrl+O"))?;
+    let open_folder_item = MenuItem::with_id(
+        app,
+        "open-folder",
+        l.open_folder,
+        true,
+        Some("CmdOrCtrl+Alt+O"),
+    )?;
 
     let recent_menu =
         Submenu::with_id(app, "recent", l.open_recent, true)?;
@@ -146,6 +157,7 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
 
     let file_menu = Submenu::with_id(app, "file", l.file, true)?;
     file_menu.append(&open_item)?;
+    file_menu.append(&open_folder_item)?;
     file_menu.append(&PredefinedMenuItem::separator(app)?)?;
     let edit_item = MenuItem::with_id(app, "edit", l.edit, true, Some("CmdOrCtrl+E"))?;
     let save_item = MenuItem::with_id(app, "save", l.save, true, Some("CmdOrCtrl+S"))?;

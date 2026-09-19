@@ -47,6 +47,10 @@ pub fn run() {
             commands::get_reading_position,
             commands::set_reading_position,
             commands::watch_file,
+            commands::list_markdown_files,
+            commands::search_markdown_files,
+            commands::set_last_folder,
+            commands::path_is_dir,
             commands::set_language,
             commands::take_pending_file
         ])

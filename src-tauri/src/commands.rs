@@ -222,3 +222,210 @@ pub fn has_markdown_ext(path: &Path) -> bool {
         Some("md" | "markdown" | "mdown" | "mkd")
     )
 }
+
+/* ---------- folder mode (light workspace) ---------- */
+
+const MAX_LISTED_FILES: usize = 2000;
+const MAX_SEARCH_HITS: usize = 200;
+const MAX_SEARCH_FILE_SIZE: u64 = 1024 * 1024;
+const MAX_SEARCH_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+const SKIPPED_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "venv",
+    ".venv",
+    "__pycache__",
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub path: String,
+    pub name: String,
+    pub rel_path: String,
+    pub size: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderListing {
+    pub dir: String,
+    pub files: Vec<FileEntry>,
+    pub truncated: bool,
+}
+
+/// Depth-first walk collecting markdown files below `root`, skipping hidden
+/// and well-known generated directories. Returns whether the listing was
+/// truncated at MAX_LISTED_FILES.
+fn walk_markdown_files(root: &Path, out: &mut Vec<FileEntry>) -> bool {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if name.starts_with('.') || SKIPPED_DIRS.contains(&name) {
+                    continue;
+                }
+                stack.push(path);
+            } else if file_type.is_file() && has_markdown_ext(&path) {
+                if out.len() >= MAX_LISTED_FILES {
+                    return true;
+                }
+                let rel_path = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned();
+                out.push(FileEntry {
+                    path: path.to_string_lossy().into_owned(),
+                    name: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    rel_path,
+                    size: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                });
+            }
+        }
+    }
+    false
+}
+
+#[tauri::command]
+pub fn list_markdown_files(dir: String) -> Result<FolderListing, String> {
+    let root = PathBuf::from(&dir);
+    if !root.is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let mut files = Vec::new();
+    let truncated = walk_markdown_files(&root, &mut files);
+    files.sort_by(|a, b| a.rel_path.to_lowercase().cmp(&b.rel_path.to_lowercase()));
+    Ok(FolderListing {
+        dir,
+        files,
+        truncated,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub path: String,
+    pub name: String,
+    pub line: u32,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSearchResults {
+    pub hits: Vec<SearchHit>,
+    pub truncated: bool,
+}
+
+/// Case-insensitive line search across the folder's markdown files,
+/// bounded in file count, file size and total bytes scanned.
+#[tauri::command]
+pub fn search_markdown_files(dir: String, query: String) -> Result<FolderSearchResults, String> {
+    let root = PathBuf::from(&dir);
+    if !root.is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let needle = query.to_lowercase();
+    if needle.trim().is_empty() {
+        return Ok(FolderSearchResults {
+            hits: Vec::new(),
+            truncated: false,
+        });
+    }
+
+    let mut files = Vec::new();
+    walk_markdown_files(&root, &mut files);
+    files.sort_by(|a, b| a.rel_path.to_lowercase().cmp(&b.rel_path.to_lowercase()));
+
+    let mut hits = Vec::new();
+    let mut truncated = false;
+    let mut scanned_bytes = 0u64;
+    for file in &files {
+        if hits.len() >= MAX_SEARCH_HITS {
+            truncated = true;
+            break;
+        }
+        let Ok(meta) = fs::metadata(&file.path) else {
+            continue;
+        };
+        if meta.len() > MAX_SEARCH_FILE_SIZE || scanned_bytes + meta.len() > MAX_SEARCH_TOTAL_BYTES
+        {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&file.path) else {
+            continue;
+        };
+        scanned_bytes += meta.len();
+        for (idx, line) in content.lines().enumerate() {
+            if line.to_lowercase().contains(&needle) {
+                hits.push(SearchHit {
+                    path: file.path.clone(),
+                    name: file.name.clone(),
+                    line: (idx + 1) as u32,
+                    text: search_snippet(line, &needle),
+                });
+                if hits.len() >= MAX_SEARCH_HITS {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+    }
+    Ok(FolderSearchResults { hits, truncated })
+}
+
+/// Trim a matching line around the first match for display.
+fn search_snippet(line: &str, needle: &str) -> String {
+    let lowered = line.to_lowercase();
+    let Some(match_pos) = lowered.find(needle) else {
+        return line.chars().take(160).collect();
+    };
+    let start = lowered
+        .char_indices()
+        .map(|(i, _)| i)
+        .filter(|&i| i + 80 < match_pos)
+        .max()
+        .unwrap_or(0);
+    let end = lowered
+        .char_indices()
+        .map(|(i, _)| i)
+        .find(|&i| i >= match_pos + needle.len() + 80)
+        .unwrap_or(line.len());
+    let mut snippet = line[start..end].trim().to_string();
+    if start > 0 {
+        snippet.insert_str(0, "…");
+    }
+    if end < line.len() {
+        snippet.push('…');
+    }
+    snippet
+}
+
+#[tauri::command]
+pub fn set_last_folder(app: AppHandle, path: Option<String>) {
+    let mut app_settings = settings::load(&app);
+    app_settings.last_folder = path;
+    settings::save(&app, &app_settings);
+}
+
+#[tauri::command]
+pub fn path_is_dir(path: String) -> bool {
+    Path::new(&path).is_dir()
+}

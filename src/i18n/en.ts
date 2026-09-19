@@ -22,4 +22,10 @@ export const dict = {
   copyCode: "Copy",
   copiedCode: "Copied!",
   backToTop: "Back to top",
+  filesTitle: "Files",
+  openFolder: "Open Folder…",
+  searchFolderPlaceholder: "Search in folder",
+  searchNoResults: "No matches",
+  searchResultsCount: "{n} matches",
+  folderTruncated: "Listing truncated (too many files)",
 };
