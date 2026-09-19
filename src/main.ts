@@ -240,6 +240,46 @@ function updateReadingProgress(): void {
   progressEl.style.width = `${Math.min(100, Math.max(0, pct))}%`;
 }
 
+/* ---------- auto-reload ---------- */
+
+const RELOAD_DEBOUNCE = 250;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Transient status-bar hint; the next updateStatus() call replaces it. */
+function statusHint(text: string): void {
+  statusMeta.textContent = text;
+}
+
+async function reloadCurrentFile(): Promise<void> {
+  if (!currentFile) return;
+  let file: FileInfo;
+  try {
+    file = await invoke<FileInfo>("read_markdown_file", { path: currentFile.path });
+  } catch {
+    statusHint(t("fileUnavailable"));
+    return;
+  }
+  // Same content on disk: our own save round-tripping through the watcher.
+  if (file.content === currentFile.content) return;
+  if (isEditing) {
+    // Never clobber the editor buffer; surface the divergence instead.
+    statusHint(t("fileChangedOnDisk"));
+    return;
+  }
+  const snapshot = currentScrollSnapshot();
+  fileUsesCrlf = file.content.includes("\r\n");
+  currentFile = file;
+  await renderDocument(file.content, file.dir);
+  restoreScroll(scrollPane, snapshot);
+  updateStatus();
+}
+
+function handleFileChanged(path: string): void {
+  if (!currentFile || path !== currentFile.path) return;
+  if (reloadTimer) clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => void reloadCurrentFile(), RELOAD_DEBOUNCE);
+}
+
 function enterEditMode(): void {
   if (!currentFile) return;
   resetSearch(search);
@@ -316,6 +356,11 @@ async function openPath(path: string): Promise<void> {
       await getCurrentWindow().setTitle(`${file.name} — MarkRead`);
       await invoke("push_recent_file", { path });
       void refreshRecents();
+      try {
+        await invoke("watch_file", { path });
+      } catch {
+        /* auto-reload unavailable for this path — reading still works */
+      }
     }
   } catch (err) {
     await showError(err);
@@ -391,6 +436,7 @@ function toggleSidebar(): void {
 
 async function setupListeners(): Promise<void> {
   await listen<string>("open-file", (event) => void openPath(event.payload));
+  await listen<string>("file-changed", (event) => handleFileChanged(event.payload));
 
   await listen<string>("menu-action", (event) => {
     switch (event.payload) {

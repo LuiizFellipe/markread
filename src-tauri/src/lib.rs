@@ -2,7 +2,7 @@ mod commands;
 mod menu;
 mod settings;
 
-use commands::PendingFile;
+use commands::{FileWatcher, PendingFile};
 use tauri::Manager;
 
 pub fn run() {
@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(PendingFile(Default::default()))
+        .manage(FileWatcher(Default::default()))
         .setup(|app| {
             let handle = app.handle().clone();
             menu::refresh(&handle)?;
@@ -45,6 +46,7 @@ pub fn run() {
             commands::get_settings,
             commands::get_reading_position,
             commands::set_reading_position,
+            commands::watch_file,
             commands::set_language,
             commands::take_pending_file
         ])

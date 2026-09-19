@@ -1,3 +1,4 @@
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,57 @@ use crate::{menu, settings};
 /// File path handed to the app at startup (argv, macOS open event) that the
 /// frontend picks up with `take_pending_file` once its listener is attached.
 pub struct PendingFile(pub Mutex<Option<String>>);
+
+/// Active watcher for auto-reload; replaced each time a file is opened.
+/// Watching the parent directory (not the file handle) keeps the watch alive
+/// across editors that save via write-temp-then-rename (VS Code, others).
+pub struct FileWatcher(pub Mutex<Option<RecommendedWatcher>>);
+
+fn paths_match(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    #[cfg(windows)]
+    return a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy());
+    #[cfg(not(windows))]
+    return false;
+}
+
+/// Watch `path` for external changes and emit `file-changed` to the window.
+#[tauri::command]
+pub fn watch_file(
+    app: AppHandle,
+    watcher: State<'_, FileWatcher>,
+    path: String,
+) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    let parent = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| format!("no parent directory: {path}"))?
+        .to_path_buf();
+
+    let mut fs_watcher = notify::recommended_watcher({
+        let app = app.clone();
+        let target = target.clone();
+        move |result: Result<Event, notify::Error>| {
+            let Ok(event) = result else { return };
+            if event.paths.iter().any(|p| paths_match(p, &target)) {
+                let _ = app.emit_to(
+                    "main",
+                    "file-changed",
+                    target.to_string_lossy().into_owned(),
+                );
+            }
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    fs_watcher
+        .watch(&parent, RecursiveMode::NonRecursive)
+        .map_err(|e| e.to_string())?;
+    *watcher.0.lock().unwrap() = Some(fs_watcher);
+    Ok(())
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

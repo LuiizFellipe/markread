@@ -17,4 +17,6 @@ export const dict: Record<string, string> = {
   saveErrorTitle: "No se pudo guardar el archivo",
   unsavedTitle: "Cambios sin guardar",
   unsavedMessage: "Tienes cambios sin guardar. ¿Descartarlos?",
+  fileChangedOnDisk: "archivo modificado en disco",
+  fileUnavailable: "archivo no disponible en disco",
 };

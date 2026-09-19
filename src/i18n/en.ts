@@ -17,4 +17,6 @@ export const dict = {
   saveErrorTitle: "Could not save file",
   unsavedTitle: "Unsaved changes",
   unsavedMessage: "You have unsaved changes. Discard them?",
+  fileChangedOnDisk: "file changed on disk",
+  fileUnavailable: "file unavailable on disk",
 };
