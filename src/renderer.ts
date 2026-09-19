@@ -115,9 +115,11 @@ function legacyCopy(text: string): boolean {
   return ok;
 }
 
-/** Wrap each code block in a positioned container with a copy button. */
+/** Wrap each code block in a positioned container with a copy button.
+ *  Mermaid blocks are skipped: they are replaced by diagrams afterwards. */
 function addCopyButtons(container: HTMLElement): void {
   container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector("code.language-mermaid")) return;
     if (pre.parentElement?.classList.contains("code-block")) return;
     const wrapper = document.createElement("div");
     wrapper.className = "code-block";

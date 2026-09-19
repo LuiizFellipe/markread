@@ -78,7 +78,7 @@ const fileListEl = $<HTMLElement>("#file-list");
 const welcomeFolder = $<HTMLButtonElement>("#welcome-folder");
 
 const search = initSearch(bodyEl, findbar, findInput, findCount);
-const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings);
+const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings, bodyEl);
 
 let headings: Heading[] = [];
 let currentFile: FileInfo | null = null;
@@ -86,6 +86,9 @@ let isEditing = false;
 let isDirty = false;
 let fileUsesCrlf = false;
 let hasMermaid = false;
+/** Bumped on every committed render; async render pipelines abort after
+ *  each await when theirs is no longer the newest generation. */
+let renderGeneration = 0;
 
 interface FileEntry {
   path: string;
@@ -115,6 +118,7 @@ interface FolderSearchResults {
 let workspaceDir: string | null = null;
 let folderListing: FolderListing | null = null;
 let folderSearchTimer: ReturnType<typeof setTimeout> | null = null;
+let folderSearchSeq = 0;
 
 /* ---------- zoom ---------- */
 
@@ -180,7 +184,7 @@ async function renderDocument(content: string, dir: string): Promise<void> {
   });
   hasMermaid = await renderMermaidBlocks(bodyEl);
   headings = collectHeadings(bodyEl);
-  renderOutline(outlineEl, headings, t("outlineEmpty"));
+  renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
   updateScrollSpy();
 }
 
@@ -240,6 +244,7 @@ let positionSaveTimer: ReturnType<typeof setTimeout> | null = null;
 function currentScrollSnapshot(): ScrollSnapshot {
   return captureScroll(
     scrollPane,
+    bodyEl,
     headings.map((h) => h.id),
   );
 }
@@ -293,13 +298,16 @@ function statusHint(text: string): void {
 
 async function reloadCurrentFile(): Promise<void> {
   if (!currentFile) return;
+  const gen = ++renderGeneration;
+  const path = currentFile.path;
   let file: FileInfo;
   try {
-    file = await invoke<FileInfo>("read_markdown_file", { path: currentFile.path });
+    file = await invoke<FileInfo>("read_markdown_file", { path });
   } catch {
-    statusHint(t("fileUnavailable"));
+    if (gen === renderGeneration) statusHint(t("fileUnavailable"));
     return;
   }
+  if (gen !== renderGeneration || !currentFile || currentFile.path !== path) return;
   // Same content on disk: our own save round-tripping through the watcher.
   if (file.content === currentFile.content) return;
   if (isEditing) {
@@ -311,7 +319,9 @@ async function reloadCurrentFile(): Promise<void> {
   fileUsesCrlf = file.content.includes("\r\n");
   currentFile = file;
   await renderDocument(file.content, file.dir);
-  restoreScroll(scrollPane, snapshot);
+  if (gen !== renderGeneration) return;
+  restoreScroll(scrollPane, bodyEl, snapshot);
+  resetSearch(search);
   updateStatus();
 }
 
@@ -323,6 +333,7 @@ function handleFileChanged(path: string): void {
 
 function enterEditMode(): void {
   if (!currentFile) return;
+  renderGeneration++; // cancel any in-flight document render
   resetSearch(search);
   isEditing = true;
   editorEl.value = currentFile.content;
@@ -338,7 +349,9 @@ function exitEditMode(): void {
   isEditing = false;
   editorEl.hidden = true;
   currentFile.content = applyFileLineEndings(editorEl.value);
+  const gen = ++renderGeneration;
   void renderDocument(currentFile.content, currentFile.dir).then(() => {
+    if (gen !== renderGeneration || isEditing) return;
     showDocument();
     updateStatus();
     updateReadingProgress();
@@ -368,7 +381,9 @@ async function saveFile(): Promise<void> {
 
 async function openPath(path: string): Promise<void> {
   if (!(await confirmDiscardChanges())) return;
+  const gen = ++renderGeneration;
   await saveReadingPositionNow();
+  if (gen !== renderGeneration) return;
   try {
     const savedPosition: Promise<ReadingPosition | null> = inTauri
       ? invoke<ReadingPosition | null>("get_reading_position", { path }).catch(() => null)
@@ -377,6 +392,7 @@ async function openPath(path: string): Promise<void> {
       invoke<FileInfo>("read_markdown_file", { path }),
       savedPosition,
     ]);
+    if (gen !== renderGeneration) return;
     isEditing = false;
     isDirty = false;
     editorEl.hidden = true;
@@ -384,9 +400,10 @@ async function openPath(path: string): Promise<void> {
     fileUsesCrlf = file.content.includes("\r\n");
     currentFile = file;
     await renderDocument(file.content, file.dir);
+    if (gen !== renderGeneration) return;
     showDocument();
     updateStatus();
-    restoreScroll(scrollPane, {
+    restoreScroll(scrollPane, bodyEl, {
       top: saved?.scrollTop ?? 0,
       height: saved?.scrollHeight ?? 0,
       anchorId: saved?.anchorId ?? null,
@@ -395,6 +412,7 @@ async function openPath(path: string): Promise<void> {
     updateReadingProgress();
     if (inTauri) {
       await getCurrentWindow().setTitle(`${file.name} — MarkRead`);
+      if (gen !== renderGeneration) return;
       await invoke("push_recent_file", { path });
       void refreshRecents();
       highlightActiveFile();
@@ -405,7 +423,7 @@ async function openPath(path: string): Promise<void> {
       }
     }
   } catch (err) {
-    await showError(err);
+    if (gen === renderGeneration) await showError(err);
   }
 }
 
@@ -495,7 +513,7 @@ async function openFolderDialog(): Promise<void> {
 
 async function openFolder(
   dir: string,
-  { reveal = false }: { reveal?: boolean } = {},
+  { reveal = false, quiet = false }: { reveal?: boolean; quiet?: boolean } = {},
 ): Promise<void> {
   try {
     const listing = await invoke<FolderListing>("list_markdown_files", { dir });
@@ -514,6 +532,12 @@ async function openFolder(
       localStorage.setItem(OUTLINE_KEY, "1");
     }
   } catch (err) {
+    // A folder restored from settings that no longer exists must not
+    // nag on every launch — forget it silently instead.
+    if (quiet) {
+      void invoke("set_last_folder", { path: null }).catch(() => {});
+      return;
+    }
     await showError(err);
   }
 }
@@ -594,11 +618,16 @@ function runFolderSearch(): void {
     renderFileList(folderListing);
     return;
   }
+  const seq = ++folderSearchSeq;
   void invoke<FolderSearchResults>("search_markdown_files", {
     dir: workspaceDir,
     query,
   })
-    .then(renderSearchResults)
+    .then((results) => {
+      // Drop late responses from superseded queries (folder scans can take
+      // a while; the debounce alone does not serialize them).
+      if (seq === folderSearchSeq) renderSearchResults(results);
+    })
     .catch(() => {});
 }
 
@@ -674,9 +703,11 @@ async function setupListeners(): Promise<void> {
     setThemePreference(event.payload as ThemePreference);
     // Mermaid diagrams bake the palette in at render time.
     if (hasMermaid && currentFile && !isEditing) {
+      const gen = ++renderGeneration;
       const snapshot = currentScrollSnapshot();
       await renderDocument(currentFile.content, currentFile.dir);
-      restoreScroll(scrollPane, snapshot);
+      if (gen !== renderGeneration) return;
+      restoreScroll(scrollPane, bodyEl, snapshot);
     }
   });
 
@@ -684,8 +715,9 @@ async function setupListeners(): Promise<void> {
     setLanguage(event.payload as Lang);
     applyI18n();
     updateStatus();
-    renderOutline(outlineEl, headings, t("outlineEmpty"));
+    renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
     backToTop.title = t("backToTop");
+    backToTop.setAttribute("aria-label", t("backToTop"));
   });
 
   if (inTauri) {
@@ -793,6 +825,7 @@ async function boot(): Promise<void> {
     scrollPane.scrollTo({ top: 0, behavior: "smooth" });
   });
   backToTop.title = t("backToTop");
+  backToTop.setAttribute("aria-label", t("backToTop"));
   setSidebarTab(localStorage.getItem(SIDEBAR_TAB_KEY) === "files" ? "files" : "outline");
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
@@ -852,7 +885,7 @@ async function boot(): Promise<void> {
     }
     try {
       const settings = await invoke<{ lastFolder: string | null }>("get_settings");
-      if (settings.lastFolder) await openFolder(settings.lastFolder);
+      if (settings.lastFolder) await openFolder(settings.lastFolder, { quiet: true });
     } catch (err) {
       console.error(err);
     }

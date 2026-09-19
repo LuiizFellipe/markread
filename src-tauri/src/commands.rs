@@ -116,19 +116,19 @@ pub fn get_recent_files(app: AppHandle) -> Vec<String> {
 
 #[tauri::command]
 pub fn push_recent_file(app: AppHandle, path: String) {
-    let mut app_settings = settings::load(&app);
-    app_settings.recent_files.retain(|p| p != &path);
-    app_settings.recent_files.insert(0, path);
-    app_settings.recent_files.truncate(10);
-    settings::save(&app, &app_settings);
+    settings::update(&app, |app_settings| {
+        app_settings.recent_files.retain(|p| p != &path);
+        app_settings.recent_files.insert(0, path.clone());
+        app_settings.recent_files.truncate(10);
+    });
     let _ = menu::refresh(&app);
 }
 
 #[tauri::command]
 pub fn clear_recent_files(app: AppHandle) {
-    let mut app_settings = settings::load(&app);
-    app_settings.recent_files.clear();
-    settings::save(&app, &app_settings);
+    settings::update(&app, |app_settings| {
+        app_settings.recent_files.clear();
+    });
     let _ = menu::refresh(&app);
 }
 
@@ -137,12 +137,26 @@ pub fn get_settings(app: AppHandle) -> settings::Settings {
     settings::load(&app)
 }
 
+/// Case-stable key for per-path settings on case-insensitive filesystems,
+/// so the same file opened from different sources shares one entry.
+fn normalize_path_key(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.replace('/', "\\").to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string()
+    }
+}
+
 #[tauri::command]
 pub fn get_reading_position(app: AppHandle, path: String) -> Option<settings::ReadingEntry> {
+    let key = normalize_path_key(&path);
     settings::load(&app)
         .reading_positions
         .into_iter()
-        .find(|entry| entry.path == path)
+        .find(|entry| normalize_path_key(&entry.path) == key)
 }
 
 /// Upsert the reading position (most-recently-read first, capped so the
@@ -156,31 +170,33 @@ pub fn set_reading_position(
     anchor_id: Option<String>,
     anchor_offset: f64,
 ) {
-    let mut app_settings = settings::load(&app);
-    app_settings
-        .reading_positions
-        .retain(|entry| entry.path != path);
-    app_settings.reading_positions.insert(
-        0,
-        settings::ReadingEntry {
-            path,
-            scroll_top,
-            scroll_height,
-            anchor_id,
-            anchor_offset,
-        },
-    );
-    app_settings.reading_positions.truncate(100);
-    settings::save(&app, &app_settings);
+    let key = normalize_path_key(&path);
+    settings::update(&app, |app_settings| {
+        app_settings
+            .reading_positions
+            .retain(|entry| normalize_path_key(&entry.path) != key);
+        app_settings.reading_positions.insert(
+            0,
+            settings::ReadingEntry {
+                path,
+                scroll_top,
+                scroll_height,
+                anchor_id,
+                anchor_offset,
+            },
+        );
+        app_settings.reading_positions.truncate(100);
+    });
 }
 
 #[tauri::command]
 pub fn set_language(app: AppHandle, language: String) -> Result<(), String> {
-    let mut app_settings = settings::load(&app);
-    app_settings.language = language;
-    settings::save(&app, &app_settings);
+    let current = settings::update(&app, |app_settings| {
+        app_settings.language = language.clone();
+        app_settings.language.clone()
+    });
     menu::refresh(&app).map_err(|e| e.to_string())?;
-    let _ = app.emit("language-changed", app_settings.language);
+    let _ = app.emit("language-changed", current);
     Ok(())
 }
 
@@ -226,6 +242,7 @@ pub fn has_markdown_ext(path: &Path) -> bool {
 /* ---------- folder mode (light workspace) ---------- */
 
 const MAX_LISTED_FILES: usize = 2000;
+const MAX_WALK_ENTRIES: usize = 50_000;
 const MAX_SEARCH_HITS: usize = 200;
 const MAX_SEARCH_FILE_SIZE: u64 = 1024 * 1024;
 const MAX_SEARCH_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
@@ -258,14 +275,20 @@ pub struct FolderListing {
 
 /// Depth-first walk collecting markdown files below `root`, skipping hidden
 /// and well-known generated directories. Returns whether the listing was
-/// truncated at MAX_LISTED_FILES.
+/// truncated (file cap or entry cap — the latter bounds walks of huge trees
+/// with few markdown files).
 fn walk_markdown_files(root: &Path, out: &mut Vec<FileEntry>) -> bool {
     let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
     while let Some(current) = stack.pop() {
         let Ok(entries) = fs::read_dir(&current) else {
             continue;
         };
         for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_WALK_ENTRIES {
+                return true;
+            }
             let Ok(file_type) = entry.file_type() else {
                 continue;
             };
@@ -286,7 +309,7 @@ fn walk_markdown_files(root: &Path, out: &mut Vec<FileEntry>) -> bool {
                     .strip_prefix(root)
                     .unwrap_or(&path)
                     .to_string_lossy()
-                    .into_owned();
+                    .replace('\\', "/");
                 out.push(FileEntry {
                     path: path.to_string_lossy().into_owned(),
                     name: path
@@ -310,12 +333,28 @@ pub fn list_markdown_files(dir: String) -> Result<FolderListing, String> {
     }
     let mut files = Vec::new();
     let truncated = walk_markdown_files(&root, &mut files);
-    files.sort_by(|a, b| a.rel_path.to_lowercase().cmp(&b.rel_path.to_lowercase()));
+    // Sort by directory, then name, so same-directory files stay contiguous
+    // for the frontend's folder grouping.
+    files.sort_by(|a, b| {
+        let (dir_a, name_a) = split_rel_path(&a.rel_path);
+        let (dir_b, name_b) = split_rel_path(&b.rel_path);
+        dir_a
+            .to_lowercase()
+            .cmp(&dir_b.to_lowercase())
+            .then_with(|| name_a.to_lowercase().cmp(&name_b.to_lowercase()))
+    });
     Ok(FolderListing {
         dir,
         files,
         truncated,
     })
+}
+
+fn split_rel_path(rel_path: &str) -> (&str, &str) {
+    match rel_path.rfind('/') {
+        Some(idx) => (&rel_path[..idx], &rel_path[idx + 1..]),
+        None => ("", rel_path),
+    }
 }
 
 #[derive(Serialize)]
@@ -352,7 +391,14 @@ pub fn search_markdown_files(dir: String, query: String) -> Result<FolderSearchR
 
     let mut files = Vec::new();
     walk_markdown_files(&root, &mut files);
-    files.sort_by(|a, b| a.rel_path.to_lowercase().cmp(&b.rel_path.to_lowercase()));
+    files.sort_by(|a, b| {
+        let (dir_a, name_a) = split_rel_path(&a.rel_path);
+        let (dir_b, name_b) = split_rel_path(&b.rel_path);
+        dir_a
+            .to_lowercase()
+            .cmp(&dir_b.to_lowercase())
+            .then_with(|| name_a.to_lowercase().cmp(&name_b.to_lowercase()))
+    });
 
     let mut hits = Vec::new();
     let mut truncated = false;
@@ -391,28 +437,31 @@ pub fn search_markdown_files(dir: String, query: String) -> Result<FolderSearchR
     Ok(FolderSearchResults { hits, truncated })
 }
 
-/// Trim a matching line around the first match for display.
+/// Trim a matching line around the first match for display. Byte offsets
+/// from `line.to_lowercase()` cannot index `line` (lowercasing can change
+/// byte lengths, e.g. U+0130), so the window is computed over chars only —
+/// approximate placement, but never a panic or invalid boundary.
 fn search_snippet(line: &str, needle: &str) -> String {
     let lowered = line.to_lowercase();
-    let Some(match_pos) = lowered.find(needle) else {
-        return line.chars().take(160).collect();
-    };
-    let start = lowered
-        .char_indices()
-        .map(|(i, _)| i)
-        .filter(|&i| i + 80 < match_pos)
-        .max()
-        .unwrap_or(0);
-    let end = lowered
-        .char_indices()
-        .map(|(i, _)| i)
-        .find(|&i| i >= match_pos + needle.len() + 80)
-        .unwrap_or(line.len());
-    let mut snippet = line[start..end].trim().to_string();
-    if start > 0 {
+    let approx_match_char = lowered
+        .find(needle)
+        .map(|pos| lowered[..pos].chars().count());
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= 160 {
+        return line.to_string();
+    }
+    let needle_chars = needle.chars().count().max(1);
+    let approx_char = approx_match_char
+        .unwrap_or(0)
+        .min(chars.len().saturating_sub(1));
+    let half = 80usize;
+    let start_char = approx_char.saturating_sub(half);
+    let end_char = (approx_char + needle_chars + half).min(chars.len());
+    let mut snippet: String = chars[start_char..end_char].iter().collect();
+    if start_char > 0 {
         snippet.insert_str(0, "…");
     }
-    if end < line.len() {
+    if end_char < chars.len() {
         snippet.push('…');
     }
     snippet
@@ -420,12 +469,32 @@ fn search_snippet(line: &str, needle: &str) -> String {
 
 #[tauri::command]
 pub fn set_last_folder(app: AppHandle, path: Option<String>) {
-    let mut app_settings = settings::load(&app);
-    app_settings.last_folder = path;
-    settings::save(&app, &app_settings);
+    settings::update(&app, |app_settings| {
+        app_settings.last_folder = path;
+    });
 }
 
 #[tauri::command]
 pub fn path_is_dir(path: String) -> bool {
     Path::new(&path).is_dir()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::search_snippet;
+
+    #[test]
+    fn snippet_survives_chars_whose_lowercase_expands() {
+        // U+0130 lowercases to two chars; the old implementation sliced the
+        // original line with byte offsets from the lowercased copy and
+        // panicked on non-char boundaries.
+        let line = "İé".to_string() + &"x".repeat(79) + "hedef";
+        let snippet = search_snippet(&line, "hedef");
+        assert!(snippet.contains("hedef"));
+    }
+
+    #[test]
+    fn snippet_short_lines_pass_through() {
+        assert_eq!(search_snippet("short match here", "match"), "short match here");
+    }
 }

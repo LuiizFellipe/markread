@@ -1,6 +1,8 @@
 /** Lazy Mermaid support: the heavy library is only imported when the
  *  rendered document actually contains ```mermaid blocks. */
 
+import { openUrl } from "@tauri-apps/plugin-opener";
+
 let mermaidModule: Promise<typeof import("mermaid")> | null = null;
 let initializedTheme: string | null = null;
 
@@ -47,6 +49,25 @@ export async function renderMermaidBlocks(
     } catch {
       /* mermaid renders its own error message into the node */
     }
+    neutralizeLinks(holder);
   }
   return true;
+}
+
+/** Mermaid turns `click A href "url"` directives into real SVG anchors
+ *  that would navigate the webview itself. Detach them; external http(s)
+ *  links open in the OS browser, matching markdown link behavior. */
+function neutralizeLinks(container: HTMLElement): void {
+  container.querySelectorAll("a").forEach((a) => {
+    const href = a.getAttribute("href") ?? a.getAttribute("xlink:href") ?? "";
+    a.removeAttribute("href");
+    a.removeAttribute("xlink:href");
+    if (/^https?:\/\//i.test(href)) {
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void openUrl(href);
+      });
+    }
+  });
 }

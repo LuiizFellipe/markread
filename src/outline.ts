@@ -16,8 +16,14 @@ export function collectHeadings(container: HTMLElement): Heading[] {
   return headings;
 }
 
-/** Build a nested <ul> tree from the flat heading list. */
-export function renderOutline(nav: HTMLElement, headings: Heading[], emptyLabel: string): void {
+/** Build a nested <ul> tree from the flat heading list. Lookups are scoped
+ *  to the article root so raw-HTML heading ids cannot hijack navigation. */
+export function renderOutline(
+  nav: HTMLElement,
+  headings: Heading[],
+  emptyLabel: string,
+  root: HTMLElement,
+): void {
   nav.innerHTML = "";
 
   if (headings.length === 0) {
@@ -28,8 +34,8 @@ export function renderOutline(nav: HTMLElement, headings: Heading[], emptyLabel:
     return;
   }
 
-  const root = document.createElement("ul");
-  let currentList: HTMLUListElement = root;
+  const tree = document.createElement("ul");
+  let currentList: HTMLUListElement = tree;
   let currentLevel = headings[0].level;
   let currentItem: HTMLLIElement | null = null;
 
@@ -40,8 +46,8 @@ export function renderOutline(nav: HTMLElement, headings: Heading[], emptyLabel:
       currentList = nested;
       currentLevel = heading.level;
     }
-    while (heading.level < currentLevel && currentList !== root && currentList.parentElement) {
-      currentList = currentList.parentElement.closest("ul") ?? root;
+    while (heading.level < currentLevel && currentList !== tree && currentList.parentElement) {
+      currentList = currentList.parentElement.closest("ul") ?? tree;
       currentLevel -= 1;
     }
     if (heading.level < currentLevel) currentLevel = heading.level;
@@ -53,14 +59,18 @@ export function renderOutline(nav: HTMLElement, headings: Heading[], emptyLabel:
     a.textContent = heading.text;
     a.addEventListener("click", (ev) => {
       ev.preventDefault();
-      document.getElementById(heading.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      headingById(root, heading.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     li.appendChild(a);
     currentList.appendChild(li);
     currentItem = li;
   }
 
-  nav.appendChild(root);
+  nav.appendChild(tree);
+}
+
+function headingById(root: HTMLElement, id: string): HTMLElement | null {
+  return root.querySelector(`#${CSS.escape(id)}`);
 }
 
 /** Highlight the outline entry for the heading nearest the top of the view. */
@@ -68,6 +78,7 @@ export function initScrollSpy(
   scrollPane: HTMLElement,
   nav: HTMLElement,
   getHeadings: () => Heading[],
+  root: HTMLElement,
 ): () => void {
   let ticking = false;
 
@@ -78,7 +89,7 @@ export function initScrollSpy(
     const scrollTop = scrollPane.scrollTop + 96;
     let activeId = headings[0].id;
     for (const heading of headings) {
-      const el = document.getElementById(heading.id);
+      const el = headingById(root, heading.id);
       if (el && el.offsetTop <= scrollTop) activeId = heading.id;
     }
     nav.querySelectorAll("a.active").forEach((a) => a.classList.remove("active"));

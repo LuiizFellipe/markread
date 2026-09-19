@@ -246,12 +246,18 @@ pub fn handle_event(app: &AppHandle, id: &str) {
         }
         "lang-en" | "lang-pt-BR" | "lang-es" => {
             let language = id.trim_start_matches("lang-").to_string();
-            let mut app_settings = settings::load(app);
-            if app_settings.language != language {
-                app_settings.language = language;
-                settings::save(app, &app_settings);
+            let changed = settings::update(app, |app_settings| {
+                if app_settings.language != language {
+                    app_settings.language = language.clone();
+                    true
+                } else {
+                    false
+                }
+            });
+            if changed {
                 let _ = refresh(app);
-                let _ = app.emit_to(MAIN_WINDOW, "language-changed", app_settings.language);
+                let current = settings::load(app).language;
+                let _ = app.emit_to(MAIN_WINDOW, "language-changed", current);
             }
         }
         id if id.starts_with("recent-") => {
