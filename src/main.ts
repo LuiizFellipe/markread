@@ -66,6 +66,7 @@ const clearRecentBtn = $<HTMLButtonElement>("#clear-recent");
 const statusFile = $<HTMLElement>("#status-file");
 const statusMeta = $<HTMLElement>("#status-meta");
 const progressEl = $<HTMLElement>("#reading-progress");
+const backToTop = $<HTMLButtonElement>("#back-to-top");
 
 const search = initSearch(bodyEl, findbar, findInput, findCount);
 const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings);
@@ -478,6 +479,7 @@ async function setupListeners(): Promise<void> {
     applyI18n();
     updateStatus();
     renderOutline(outlineEl, headings, t("outlineEmpty"));
+    backToTop.title = t("backToTop");
   });
 
   if (inTauri) {
@@ -565,6 +567,10 @@ async function boot(): Promise<void> {
   await refreshRecents();
 
   welcomeOpen.addEventListener("click", () => void runOpenDialog());
+  backToTop.addEventListener("click", () => {
+    scrollPane.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  backToTop.title = t("backToTop");
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
   });
@@ -596,6 +602,10 @@ async function boot(): Promise<void> {
         progressTicking = false;
         updateReadingProgress();
         scheduleSaveReadingPosition();
+        backToTop.classList.toggle(
+          "visible",
+          !!currentFile && !bodyEl.hidden && scrollPane.scrollTop > 480,
+        );
       });
     },
     { passive: true },

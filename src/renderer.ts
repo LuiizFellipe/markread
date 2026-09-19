@@ -5,6 +5,7 @@ import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { t } from "./i18n";
 import "./hljs.css";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".mdown", ".mkd"];
@@ -68,6 +69,61 @@ export interface LinkHandlers {
   onOpenMarkdownFile: (path: string) => void;
 }
 
+/** execCommand fallback for webviews where the async Clipboard API is not
+ *  exposed as a secure context. */
+function legacyCopy(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  return ok;
+}
+
+/** Wrap each code block in a positioned container with a copy button. */
+function addCopyButtons(container: HTMLElement): void {
+  container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.parentElement?.classList.contains("code-block")) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block";
+    pre.replaceWith(wrapper);
+    wrapper.appendChild(pre);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "code-copy-btn";
+    btn.dataset.i18n = "copyCode";
+    btn.textContent = t("copyCode");
+    btn.addEventListener("click", () => {
+      const text = pre.querySelector("code")?.textContent ?? "";
+      const done = () => {
+        btn.classList.add("done");
+        btn.textContent = t("copiedCode");
+        setTimeout(() => {
+          btn.classList.remove("done");
+          btn.textContent = t("copyCode");
+        }, 1500);
+      };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {
+          if (legacyCopy(text)) done();
+        });
+      } else if (legacyCopy(text)) {
+        done();
+      }
+    });
+    wrapper.appendChild(btn);
+  });
+}
+
 /** Post-process the rendered DOM: local images via the asset protocol,
  *  external links via the OS browser, .md links navigated in-app. */
 export function enhanceRendered(
@@ -75,6 +131,8 @@ export function enhanceRendered(
   baseDir: string,
   handlers: LinkHandlers,
 ): void {
+  addCopyButtons(container);
+
   container.querySelectorAll("img").forEach((img) => {
     const src = img.getAttribute("src") ?? "";
     const local = resolveAgainstBase(src, baseDir);

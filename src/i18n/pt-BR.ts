@@ -19,4 +19,7 @@ export const dict: Record<string, string> = {
   unsavedMessage: "Você tem alterações não salvas. Descartá-las?",
   fileChangedOnDisk: "arquivo alterado no disco",
   fileUnavailable: "arquivo indisponível no disco",
+  copyCode: "Copiar",
+  copiedCode: "Copiado!",
+  backToTop: "Voltar ao topo",
 };

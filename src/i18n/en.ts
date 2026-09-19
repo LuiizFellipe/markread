@@ -19,4 +19,7 @@ export const dict = {
   unsavedMessage: "You have unsaved changes. Discard them?",
   fileChangedOnDisk: "file changed on disk",
   fileUnavailable: "file unavailable on disk",
+  copyCode: "Copy",
+  copiedCode: "Copied!",
+  backToTop: "Back to top",
 };
