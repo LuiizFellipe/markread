@@ -127,6 +127,23 @@ body {
   position: relative;
 }
 
+/* Reading progress: sticky line at the very top of the scroll pane; the
+   negative margin keeps it from taking layout space. */
+#reading-progress {
+  position: sticky;
+  top: 0;
+  height: 3px;
+  margin-bottom: -3px;
+  width: 0;
+  background: var(--accent);
+  z-index: 5;
+  pointer-events: none;
+}
+
+#reading-progress[hidden] {
+  display: none;
+}
+
 #markdown-body {
   max-width: 920px;
   margin: 0 auto;

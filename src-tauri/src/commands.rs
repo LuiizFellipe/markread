@@ -86,6 +86,43 @@ pub fn get_settings(app: AppHandle) -> settings::Settings {
 }
 
 #[tauri::command]
+pub fn get_reading_position(app: AppHandle, path: String) -> Option<settings::ReadingEntry> {
+    settings::load(&app)
+        .reading_positions
+        .into_iter()
+        .find(|entry| entry.path == path)
+}
+
+/// Upsert the reading position (most-recently-read first, capped so the
+/// settings file stays small even with heavy usage).
+#[tauri::command]
+pub fn set_reading_position(
+    app: AppHandle,
+    path: String,
+    scroll_top: f64,
+    scroll_height: f64,
+    anchor_id: Option<String>,
+    anchor_offset: f64,
+) {
+    let mut app_settings = settings::load(&app);
+    app_settings
+        .reading_positions
+        .retain(|entry| entry.path != path);
+    app_settings.reading_positions.insert(
+        0,
+        settings::ReadingEntry {
+            path,
+            scroll_top,
+            scroll_height,
+            anchor_id,
+            anchor_offset,
+        },
+    );
+    app_settings.reading_positions.truncate(100);
+    settings::save(&app, &app_settings);
+}
+
+#[tauri::command]
 pub fn set_language(app: AppHandle, language: String) -> Result<(), String> {
     let mut app_settings = settings::load(&app);
     app_settings.language = language;

@@ -3,11 +3,26 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
+/// Where the reader stopped in a file, so reopening restores the position.
+/// `anchor_id`/`anchor_offset` pin the scroll to a heading, surviving edits
+/// that change the content height.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingEntry {
+    pub path: String,
+    pub scroll_top: f64,
+    pub scroll_height: f64,
+    pub anchor_id: Option<String>,
+    pub anchor_offset: f64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub language: String,
     pub recent_files: Vec<String>,
+    pub reading_positions: Vec<ReadingEntry>,
+    pub last_folder: Option<String>,
 }
 
 impl Default for Settings {
@@ -15,6 +30,8 @@ impl Default for Settings {
         Self {
             language: "en".to_string(),
             recent_files: Vec::new(),
+            reading_positions: Vec::new(),
+            last_folder: None,
         }
     }
 }

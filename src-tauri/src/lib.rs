@@ -43,6 +43,8 @@ pub fn run() {
             commands::push_recent_file,
             commands::clear_recent_files,
             commands::get_settings,
+            commands::get_reading_position,
+            commands::set_reading_position,
             commands::set_language,
             commands::take_pending_file
         ])

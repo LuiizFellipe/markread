@@ -17,6 +17,11 @@ import {
 } from "./outline";
 import { initTheme, setThemePreference, type ThemePreference } from "./theme";
 import { countWords, formatBytes, readingMinutes } from "./status";
+import {
+  captureScroll,
+  restoreScroll,
+  type ScrollSnapshot,
+} from "./scroll";
 
 /* Scope the dark GitHub stylesheet under html[data-theme="dark"] so the manual
    theme toggle (not prefers-color-scheme) decides which palette applies. */
@@ -60,6 +65,7 @@ const recentEmpty = $<HTMLElement>("#recent-empty");
 const clearRecentBtn = $<HTMLButtonElement>("#clear-recent");
 const statusFile = $<HTMLElement>("#status-file");
 const statusMeta = $<HTMLElement>("#status-meta");
+const progressEl = $<HTMLElement>("#reading-progress");
 
 const search = initSearch(bodyEl, findbar, findInput, findCount);
 const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings);
@@ -125,6 +131,18 @@ function showDocument(): void {
   bodyEl.hidden = false;
 }
 
+/** Single render pipeline shared by file open, edit exit, auto-reload and
+ *  theme-driven re-renders. */
+async function renderDocument(content: string, dir: string): Promise<void> {
+  bodyEl.innerHTML = await renderMarkdown(content);
+  enhanceRendered(bodyEl, dir, {
+    onOpenMarkdownFile: (p) => void openPath(p),
+  });
+  headings = collectHeadings(bodyEl);
+  renderOutline(outlineEl, headings, t("outlineEmpty"));
+  updateScrollSpy();
+}
+
 async function showError(err: unknown): Promise<void> {
   if (!inTauri) {
     console.error(err);
@@ -166,6 +184,62 @@ function applyFileLineEndings(value: string): string {
   return value.replaceAll(/\r?\n/g, fileUsesCrlf ? "\r\n" : "\n");
 }
 
+/* ---------- reading position ---------- */
+
+interface ReadingPosition {
+  scrollTop: number;
+  scrollHeight: number;
+  anchorId: string | null;
+  anchorOffset: number;
+}
+
+const POSITION_SAVE_DEBOUNCE = 800;
+let positionSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function currentScrollSnapshot(): ScrollSnapshot {
+  return captureScroll(
+    scrollPane,
+    headings.map((h) => h.id),
+  );
+}
+
+async function saveReadingPositionNow(): Promise<void> {
+  if (positionSaveTimer) {
+    clearTimeout(positionSaveTimer);
+    positionSaveTimer = null;
+  }
+  if (!inTauri || !currentFile || bodyEl.hidden) return;
+  const snap = currentScrollSnapshot();
+  try {
+    await invoke("set_reading_position", {
+      path: currentFile.path,
+      scrollTop: snap.top,
+      scrollHeight: snap.height,
+      anchorId: snap.anchorId,
+      anchorOffset: snap.anchorOffset,
+    });
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function scheduleSaveReadingPosition(): void {
+  if (!inTauri || !currentFile) return;
+  if (positionSaveTimer) clearTimeout(positionSaveTimer);
+  positionSaveTimer = setTimeout(() => void saveReadingPositionNow(), POSITION_SAVE_DEBOUNCE);
+}
+
+function updateReadingProgress(): void {
+  if (!currentFile || bodyEl.hidden) {
+    progressEl.hidden = true;
+    return;
+  }
+  const max = scrollPane.scrollHeight - scrollPane.clientHeight;
+  const pct = max > 0 ? (scrollPane.scrollTop / max) * 100 : 0;
+  progressEl.hidden = false;
+  progressEl.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+}
+
 function enterEditMode(): void {
   if (!currentFile) return;
   resetSearch(search);
@@ -183,15 +257,11 @@ function exitEditMode(): void {
   isEditing = false;
   editorEl.hidden = true;
   currentFile.content = applyFileLineEndings(editorEl.value);
-  bodyEl.innerHTML = renderMarkdown(currentFile.content);
-  enhanceRendered(bodyEl, currentFile.dir, {
-    onOpenMarkdownFile: (p) => void openPath(p),
+  void renderDocument(currentFile.content, currentFile.dir).then(() => {
+    showDocument();
+    updateStatus();
+    updateReadingProgress();
   });
-  headings = collectHeadings(bodyEl);
-  renderOutline(outlineEl, headings, t("outlineEmpty"));
-  updateScrollSpy();
-  showDocument();
-  updateStatus();
 }
 
 async function saveFile(): Promise<void> {
@@ -217,22 +287,31 @@ async function saveFile(): Promise<void> {
 
 async function openPath(path: string): Promise<void> {
   if (!(await confirmDiscardChanges())) return;
+  await saveReadingPositionNow();
   try {
-    const file = await invoke<FileInfo>("read_markdown_file", { path });
+    const savedPosition: Promise<ReadingPosition | null> = inTauri
+      ? invoke<ReadingPosition | null>("get_reading_position", { path }).catch(() => null)
+      : Promise.resolve(null);
+    const [file, saved] = await Promise.all([
+      invoke<FileInfo>("read_markdown_file", { path }),
+      savedPosition,
+    ]);
     isEditing = false;
     isDirty = false;
     editorEl.hidden = true;
     editorEl.value = "";
     fileUsesCrlf = file.content.includes("\r\n");
     currentFile = file;
-    bodyEl.innerHTML = renderMarkdown(file.content);
-    enhanceRendered(bodyEl, file.dir, { onOpenMarkdownFile: (p) => void openPath(p) });
-    headings = collectHeadings(bodyEl);
-    renderOutline(outlineEl, headings, t("outlineEmpty"));
-    updateScrollSpy();
+    await renderDocument(file.content, file.dir);
     showDocument();
     updateStatus();
-    scrollPane.scrollTop = 0;
+    restoreScroll(scrollPane, {
+      top: saved?.scrollTop ?? 0,
+      height: saved?.scrollHeight ?? 0,
+      anchorId: saved?.anchorId ?? null,
+      anchorOffset: saved?.anchorOffset ?? 0,
+    });
+    updateReadingProgress();
     if (inTauri) {
       await getCurrentWindow().setTitle(`${file.name} — MarkRead`);
       await invoke("push_recent_file", { path });
@@ -357,12 +436,13 @@ async function setupListeners(): Promise<void> {
 
   if (inTauri) {
     await getCurrentWindow().onCloseRequested(async (event) => {
-      if (!isDirty) return;
+      // Always intercept: persist the reading position before the window
+      // goes away, then destroy explicitly.
       event.preventDefault();
-      if (await confirmDiscardChanges()) {
-        isDirty = false;
-        await getCurrentWindow().destroy();
-      }
+      await saveReadingPositionNow();
+      if (isDirty && !(await confirmDiscardChanges())) return;
+      isDirty = false;
+      await getCurrentWindow().destroy();
     });
 
     const webview = getCurrentWebview();
@@ -459,6 +539,21 @@ async function boot(): Promise<void> {
       exitEditMode();
     }
   });
+
+  let progressTicking = false;
+  scrollPane.addEventListener(
+    "scroll",
+    () => {
+      if (progressTicking) return;
+      progressTicking = true;
+      requestAnimationFrame(() => {
+        progressTicking = false;
+        updateReadingProgress();
+        scheduleSaveReadingPosition();
+      });
+    },
+    { passive: true },
+  );
 
   if (!inTauri) setupBrowserShortcuts();
 
