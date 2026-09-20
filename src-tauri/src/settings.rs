@@ -24,6 +24,7 @@ pub struct Settings {
     pub recent_files: Vec<String>,
     pub reading_positions: Vec<ReadingEntry>,
     pub last_folder: Option<String>,
+    pub check_updates_on_startup: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +34,7 @@ impl Default for Settings {
             recent_files: Vec::new(),
             reading_positions: Vec::new(),
             last_folder: None,
+            check_updates_on_startup: true,
         }
     }
 }

@@ -1,6 +1,7 @@
 mod commands;
 mod menu;
 mod settings;
+mod updates;
 
 use commands::{FileWatcher, PendingFile};
 use tauri::Manager;
@@ -52,7 +53,8 @@ pub fn run() {
             commands::set_last_folder,
             commands::path_is_dir,
             commands::set_language,
-            commands::take_pending_file
+            commands::take_pending_file,
+            updates::check_for_updates
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

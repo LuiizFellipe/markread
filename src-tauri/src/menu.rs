@@ -30,6 +30,8 @@ struct Labels {
     find: &'static str,
     toggle_outline: &'static str,
     help: &'static str,
+    check_updates: &'static str,
+    check_updates_enabled: &'static str,
     about: &'static str,
 }
 
@@ -57,6 +59,8 @@ fn labels(lang: &str) -> Labels {
             find: "Localizar…",
             toggle_outline: "Alternar índice",
             help: "Ajuda",
+            check_updates: "Verificar atualizações…",
+            check_updates_enabled: "Verificar atualizações ao iniciar",
             about: "Sobre o MarkRead",
         }
     } else if lang == "es" {
@@ -82,6 +86,8 @@ fn labels(lang: &str) -> Labels {
             find: "Buscar…",
             toggle_outline: "Alternar índice",
             help: "Ayuda",
+            check_updates: "Buscar actualizaciones…",
+            check_updates_enabled: "Buscar actualizaciones al iniciar",
             about: "Acerca de MarkRead",
         }
     } else {
@@ -107,6 +113,8 @@ fn labels(lang: &str) -> Labels {
             find: "Find…",
             toggle_outline: "Toggle Outline",
             help: "Help",
+            check_updates: "Check for Updates…",
+            check_updates_enabled: "Check for Updates on Startup",
             about: "About MarkRead",
         }
     }
@@ -214,7 +222,20 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
     view_menu.append(&outline)?;
 
     let about = MenuItem::with_id(app, "about", l.about, true, None::<&str>)?;
+    let check_updates =
+        MenuItem::with_id(app, "check-updates", l.check_updates, true, None::<&str>)?;
+    let check_updates_enabled = CheckMenuItem::with_id(
+        app,
+        "check-updates-enabled",
+        l.check_updates_enabled,
+        true,
+        app_settings.check_updates_on_startup,
+        None::<&str>,
+    )?;
     let help_menu = Submenu::with_id(app, "help", l.help, true)?;
+    help_menu.append(&check_updates)?;
+    help_menu.append(&check_updates_enabled)?;
+    help_menu.append(&PredefinedMenuItem::separator(app)?)?;
     help_menu.append(&about)?;
 
     let menu = Menu::new(app)?;
@@ -241,6 +262,13 @@ pub fn handle_event(app: &AppHandle, id: &str) {
         "open" => emit_action(app, "open"),
         "about" => commands::show_about(app),
         "quit" => app.exit(0),
+        // CheckMenuItem toggles its own visual state; persist the inverse so
+        // the rebuilt menu (language change, next launch) matches.
+        "check-updates-enabled" => {
+            settings::update(app, |app_settings| {
+                app_settings.check_updates_on_startup = !app_settings.check_updates_on_startup;
+            });
+        }
         "theme-light" | "theme-dark" | "theme-system" => {
             let _ = app.emit_to(MAIN_WINDOW, "theme-changed", id.trim_start_matches("theme-"));
         }
