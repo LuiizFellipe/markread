@@ -544,8 +544,8 @@ async function saveReadingPositionNow(): Promise<void> {
     positionSaveTimer = null;
   }
   if (!inTauri || !currentFile || bodyEl.hidden) return;
-  const snap = currentScrollSnapshot();
   try {
+    const snap = currentScrollSnapshot();
     await invoke("set_reading_position", {
       path: currentFile.path,
       scrollTop: snap.top,
@@ -1170,9 +1170,13 @@ async function setupListeners(): Promise<void> {
       // Always intercept: persist the reading position before the window
       // goes away, then destroy explicitly.
       event.preventDefault();
-      await saveReadingPositionNow();
-      if (isDirty && !(await confirmDiscardChanges())) return;
-      isDirty = false;
+      try {
+        await saveReadingPositionNow();
+        if (isDirty && !(await confirmDiscardChanges())) return;
+        isDirty = false;
+      } catch {
+        // A failed save or dialog must never leave the window uncloseable.
+      }
       await getCurrentWindow().destroy();
     });
 
@@ -1231,7 +1235,7 @@ function setupKeyboardShortcuts(): void {
       // No native menu on Windows/Linux: quit via the close-requested flow
       // (persists the reading position, honors the dirty guard).
       ev.preventDefault();
-      void getCurrentWindow().close();
+      void getCurrentWindow().close().catch(() => {});
     } else if (ev.key === "O" && ev.shiftKey) {
       ev.preventDefault();
       toggleSidebar();
