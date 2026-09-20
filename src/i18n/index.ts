@@ -47,7 +47,8 @@ export function t(key: string, params?: Params): string {
 }
 
 /** Replace the text of every element carrying data-i18n (and placeholders
- *  via data-i18n-placeholder). Called on boot and on language change. */
+ *  via data-i18n-placeholder, titles via data-i18n-title). Called on boot
+ *  and on language change. */
 export function applyI18n(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
     el.textContent = t(el.dataset.i18n!);
@@ -55,5 +56,8 @@ export function applyI18n(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>("[data-i18n-placeholder]").forEach((el) => {
     const input = el as HTMLInputElement;
     input.placeholder = t(el.dataset.i18nPlaceholder!);
+  });
+  root.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((el) => {
+    el.title = t(el.dataset.i18nTitle!);
   });
 }

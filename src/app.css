@@ -1,18 +1,22 @@
 /* MarkRead app chrome — github-markdown-css handles the article itself.
+   Visual language follows office/document suites: neutral grays, the Office
+   blue accent, square corners, and an accent-colored status bar.
    Theme switching: html[data-theme="dark"] flips these variables and scopes
    the dark github-markdown stylesheet (injected at runtime). */
 
 :root {
   --bg: #ffffff;
-  --bg-secondary: #f6f8fa;
-  --fg: #1f2328;
-  --muted: #59636e;
-  --border: #d0d7de;
-  --accent: #0969da;
-  --accent-soft: rgba(9, 105, 218, 0.12);
+  --bg-secondary: #f5f5f5;
+  --fg: #1b1b1b;
+  --muted: #616161;
+  --border: #d9d9d9;
+  --accent: #2b579a;
+  --accent-soft: rgba(43, 87, 154, 0.12);
   --mark: rgba(212, 167, 44, 0.4);
   --mark-active: rgba(241, 194, 50, 0.85);
   --input-bg: #ffffff;
+  --statusbar-bg: #2b579a;
+  --statusbar-fg: #ffffff;
 }
 
 html[data-theme="dark"] {
@@ -21,11 +25,13 @@ html[data-theme="dark"] {
   --fg: #e6edf3;
   --muted: #8b949e;
   --border: #30363d;
-  --accent: #2f81f7;
-  --accent-soft: rgba(47, 129, 247, 0.2);
+  --accent: #4f8bd9;
+  --accent-soft: rgba(79, 139, 217, 0.18);
   --mark: rgba(187, 128, 9, 0.4);
   --mark-active: rgba(210, 153, 34, 0.7);
   --input-bg: #0d1117;
+  --statusbar-bg: #16365e;
+  --statusbar-fg: #ffffff;
   color-scheme: dark;
 }
 
@@ -87,7 +93,7 @@ body {
 #outline a {
   display: block;
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--fg);
   text-decoration: none;
   font-size: 13px;
@@ -116,24 +122,23 @@ body {
   flex: 1;
   border: none;
   background: none;
-  padding: 6px 8px;
-  font-size: 11px;
+  padding: 7px 8px 6px;
+  font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
 }
 
 .sidebar-tab:hover {
-  background: var(--accent-soft);
   color: var(--fg);
+  border-bottom-color: var(--border);
 }
 
 .sidebar-tab.active {
   color: var(--accent);
-  background: var(--accent-soft);
+  border-bottom-color: var(--accent);
 }
 
 #files-pane {
@@ -169,7 +174,7 @@ body {
   padding: 6px 10px;
   font-size: 13px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--input-bg);
   color: var(--fg);
   cursor: pointer;
@@ -183,7 +188,7 @@ body {
   margin: 0 8px 8px;
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--input-bg);
   color: var(--fg);
   font-size: 13px;
@@ -221,7 +226,7 @@ body {
   text-align: left;
   padding: 3px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: none;
   color: var(--fg);
   font-size: 13px;
@@ -323,7 +328,7 @@ body {
   padding: 2px 10px;
   font-size: 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--fg);
   cursor: pointer;
@@ -352,7 +357,7 @@ body {
   bottom: 28px;
   width: 40px;
   height: 40px;
-  border-radius: 50%;
+  border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--bg-secondary);
   color: var(--fg);
@@ -375,14 +380,121 @@ body {
   background: var(--accent-soft);
 }
 
-/* ---------- Editor ---------- */
+/* ---------- Editor (toolbar + split source/preview) ---------- */
+
+#editor-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#editor-area[hidden] {
+  display: none;
+}
+
+#editor-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.tb-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--border);
+}
+
+.tb-btn:active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.tb-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tb-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+.tb-num {
+  fill: currentColor;
+  stroke: none;
+  font-size: 6.5px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.tb-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 6px;
+}
+
+.glyph-b {
+  font-weight: 700;
+}
+
+.glyph-i {
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.glyph-s {
+  text-decoration: line-through;
+}
+
+.glyph-h {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.glyph-q {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+#editor-split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
 
 #editor {
-  display: block;
-  width: 100%;
-  height: 100%;
+  flex: 1 1 50%;
+  min-width: 0;
   box-sizing: border-box;
-  padding: 36px 48px 120px;
+  padding: 24px 32px 120px;
   border: none;
   outline: none;
   resize: none;
@@ -398,6 +510,42 @@ body {
 
 #editor[hidden] {
   display: none;
+}
+
+#editor-preview-scroll {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+
+#editor-preview {
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 24px 36px 120px;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+/* ---------- Update banner ---------- */
+
+#update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+#update-banner[hidden] {
+  display: none;
+}
+
+#update-banner-text {
+  flex: 1;
 }
 
 /* ---------- Find bar ---------- */
@@ -419,7 +567,7 @@ body {
   flex: 0 1 260px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--input-bg);
   color: var(--fg);
   font-size: 13px;
@@ -440,7 +588,7 @@ body {
   border: 1px solid var(--border);
   background: var(--input-bg);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: 4px;
   width: 26px;
   height: 26px;
   line-height: 1;
@@ -479,14 +627,14 @@ mark[data-search].current {
   width: 84px;
   height: 84px;
   margin: 0 auto 20px;
-  border-radius: 20px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 40px;
   font-weight: 700;
   color: #ffffff;
-  background: linear-gradient(135deg, #0969da, #7c3aed);
+  background: var(--accent);
   user-select: none;
 }
 
@@ -504,7 +652,7 @@ mark[data-search].current {
   padding: 8px 24px;
   font-size: 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--accent);
   border-color: var(--accent);
   color: #ffffff;
@@ -520,7 +668,7 @@ mark[data-search].current {
   padding: 8px 20px;
   font-size: 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
   cursor: pointer;
@@ -576,7 +724,7 @@ mark[data-search].current {
   text-align: left;
   padding: 7px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: none;
   color: var(--fg);
   font-size: 13px;
@@ -606,7 +754,7 @@ mark[data-search].current {
   text-align: left;
 }
 
-/* ---------- Status bar ---------- */
+/* ---------- Status bar (Office-style accent bar) ---------- */
 
 #statusbar {
   display: flex;
@@ -614,9 +762,9 @@ mark[data-search].current {
   align-items: center;
   gap: 16px;
   padding: 4px 12px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  color: var(--muted);
+  background: var(--statusbar-bg);
+  border-top: none;
+  color: var(--statusbar-fg);
   font-size: 12px;
   user-select: none;
 }
@@ -627,8 +775,19 @@ mark[data-search].current {
   text-overflow: ellipsis;
 }
 
+#status-cursor {
+  white-space: nowrap;
+  margin-left: 12px;
+  opacity: 0.9;
+}
+
+#status-cursor[hidden] {
+  display: none;
+}
+
 #status-meta {
   white-space: nowrap;
+  opacity: 0.9;
 }
 
 /* Drag highlight while dragging a file over the window */
@@ -672,7 +831,8 @@ body.dragging-file::after {
   #sidebar,
   #statusbar,
   #findbar,
-  #editor,
+  #update-banner,
+  #editor-area,
   #welcome,
   #reading-progress,
   #back-to-top,

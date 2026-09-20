@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask, message, open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./app.css";
 import "github-markdown-css/github-markdown-light.css";
 import darkGithubCss from "github-markdown-css/github-markdown-dark.css?raw";
@@ -66,8 +67,13 @@ const recentEmpty = $<HTMLElement>("#recent-empty");
 const clearRecentBtn = $<HTMLButtonElement>("#clear-recent");
 const statusFile = $<HTMLElement>("#status-file");
 const statusMeta = $<HTMLElement>("#status-meta");
+const statusCursor = $<HTMLElement>("#status-cursor");
 const progressEl = $<HTMLElement>("#reading-progress");
 const backToTop = $<HTMLButtonElement>("#back-to-top");
+const editorArea = $<HTMLElement>("#editor-area");
+const editorToolbar = $<HTMLElement>("#editor-toolbar");
+const editorPreviewEl = $<HTMLElement>("#editor-preview");
+const editorPreviewScroll = $<HTMLElement>("#editor-preview-scroll");
 const tabOutline = $<HTMLButtonElement>("#tab-outline");
 const tabFiles = $<HTMLButtonElement>("#tab-files");
 const filesPane = $<HTMLElement>("#files-pane");
@@ -76,6 +82,10 @@ const folderNameEl = $<HTMLElement>("#folder-name");
 const folderSearchInput = $<HTMLInputElement>("#folder-search");
 const fileListEl = $<HTMLElement>("#file-list");
 const welcomeFolder = $<HTMLButtonElement>("#welcome-folder");
+const updateBanner = $<HTMLElement>("#update-banner");
+const updateBannerText = $<HTMLElement>("#update-banner-text");
+const updateOpenBtn = $<HTMLButtonElement>("#update-open");
+const updateCloseBtn = $<HTMLButtonElement>("#update-close");
 
 const search = initSearch(bodyEl, findbar, findInput, findCount);
 const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings, bodyEl);
@@ -168,9 +178,31 @@ function updateStatus(): void {
   statusMeta.textContent = meta.join(" · ");
 }
 
+/** Word-style "Ln l, Col c" indicator for the status bar (edit mode only).
+ *  Runs on every caret move, so it counts newlines without allocating. */
+function updateStatusCursor(): void {
+  if (!isEditing) {
+    statusCursor.hidden = true;
+    return;
+  }
+  const value = editorEl.value;
+  const pos = editorEl.selectionStart;
+  let line = 1;
+  let idx = value.indexOf("\n");
+  while (idx !== -1 && idx < pos) {
+    line++;
+    idx = value.indexOf("\n", idx + 1);
+  }
+  const col = pos - (value.lastIndexOf("\n", pos - 1) + 1) + 1;
+  statusCursor.textContent = t("statusCursor", { l: String(line), c: String(col) });
+  statusCursor.hidden = false;
+}
+
 /* ---------- document display ---------- */
 
 function showDocument(): void {
+  editorArea.hidden = true;
+  scrollPane.hidden = false;
   welcome.hidden = true;
   bodyEl.hidden = false;
 }
@@ -227,6 +259,246 @@ async function confirmDiscardChanges(): Promise<boolean> {
  *  file had on disk so saving stays byte-faithful for Windows files. */
 function applyFileLineEndings(value: string): string {
   return value.replaceAll(/\r?\n/g, fileUsesCrlf ? "\r\n" : "\n");
+}
+
+/* ---------- editor: split preview + formatting toolbar ---------- */
+
+const PREVIEW_DEBOUNCE = 200;
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
+let previewGeneration = 0;
+
+function showEditorArea(): void {
+  editorArea.hidden = false;
+  scrollPane.hidden = true;
+}
+
+function hideEditorArea(): void {
+  editorArea.hidden = true;
+  scrollPane.hidden = false;
+}
+
+function schedulePreviewUpdate(): void {
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => void updateEditorPreview(), PREVIEW_DEBOUNCE);
+}
+
+async function updateEditorPreview(): Promise<void> {
+  if (!isEditing) return;
+  const gen = ++previewGeneration;
+  const dir = currentFile?.dir ?? "";
+  let html: string;
+  try {
+    html = await renderMarkdown(editorEl.value);
+  } catch {
+    return;
+  }
+  if (!isEditing || gen !== previewGeneration) return;
+  // Mermaid is skipped live on purpose: it is heavy and incomplete diagrams
+  // would flash parse errors — the full render happens when editing ends.
+  editorPreviewEl.innerHTML = html;
+  enhanceRendered(editorPreviewEl, dir, {
+    onOpenMarkdownFile: (p) => void openPath(p),
+  });
+}
+
+/** Replace a range in the editor preserving the native undo stack via
+ *  execCommand, with a setRangeText fallback (which needs the explicit
+ *  input dispatch that execCommand triggers on its own). */
+function editorReplace(
+  start: number,
+  end: number,
+  text: string,
+  selStart?: number,
+  selEnd?: number,
+): void {
+  editorEl.focus();
+  editorEl.setSelectionRange(start, end);
+  let applied = false;
+  try {
+    applied = document.execCommand("insertText", false, text);
+  } catch {
+    applied = false;
+  }
+  if (!applied) {
+    editorEl.setRangeText(text, start, end, "end");
+    markDirty();
+    schedulePreviewUpdate();
+    updateStatusCursor();
+  }
+  if (selStart !== undefined) {
+    editorEl.setSelectionRange(selStart, selEnd ?? selStart);
+  }
+}
+
+function wrapSelection(prefix: string, suffix = prefix): void {
+  const start = editorEl.selectionStart;
+  const end = editorEl.selectionEnd;
+  const selected = editorEl.value.slice(start, end);
+  if (
+    selected.length >= prefix.length + suffix.length &&
+    selected.startsWith(prefix) &&
+    selected.endsWith(suffix)
+  ) {
+    const inner = selected.slice(prefix.length, selected.length - suffix.length);
+    editorReplace(start, end, inner, start, start + inner.length);
+    return;
+  }
+  editorReplace(
+    start,
+    end,
+    prefix + selected + suffix,
+    start + prefix.length,
+    start + prefix.length + selected.length,
+  );
+}
+
+/** Any line-start marker the formatting buttons manage. */
+const LINE_MARKER = /^(?:#{1,6}\s+|>\s?|-\s\[[ xX]\]\s|-\s|\d+\.\s)/;
+
+function selectionLineRange(): [number, number] {
+  const value = editorEl.value;
+  // lastIndexOf with fromIndex -1 clamps to 0, which would match a leading
+  // newline and invert the range — anchor 0 must map to line 0 explicitly.
+  const anchor = editorEl.selectionStart;
+  const lineStart = anchor === 0 ? 0 : value.lastIndexOf("\n", anchor - 1) + 1;
+  let lineEnd = value.indexOf("\n", editorEl.selectionEnd);
+  if (lineEnd === -1) lineEnd = value.length;
+  return [lineStart, lineEnd];
+}
+
+function toggleLinePrefix(
+  prefixFor: (index: number) => string,
+  detect: RegExp,
+): void {
+  const [lineStart, lineEnd] = selectionLineRange();
+  const lines = editorEl.value.slice(lineStart, lineEnd).split("\n");
+  const allPrefixed = lines.every((line) => detect.test(line));
+  const updated = lines.map((line, i) =>
+    allPrefixed ? line.replace(detect, "") : prefixFor(i) + line.replace(LINE_MARKER, ""),
+  );
+  const text = updated.join("\n");
+  editorReplace(lineStart, lineEnd, text, lineStart, lineStart + text.length);
+}
+
+function cycleHeadingLevel(): void {
+  const [lineStart, lineEnd] = selectionLineRange();
+  const lines = editorEl.value.slice(lineStart, lineEnd).split("\n");
+  // The regex match includes the trailing space — count only the # chars.
+  const first = /^#{1,3}\s/.exec(lines[0]);
+  const level = first ? first[0].trim().length : 0;
+  const next = level === 0 ? 1 : level >= 3 ? 0 : level + 1;
+  const updated = lines.map((line) => {
+    const stripped = line.replace(/^#{1,6}\s+/, "");
+    return next === 0 ? stripped : `${"#".repeat(next)} ${stripped}`;
+  });
+  const text = updated.join("\n");
+  editorReplace(lineStart, lineEnd, text, lineStart, lineStart + text.length);
+}
+
+/** Insert a block (table) at the cursor, separated from surrounding text
+ *  by blank lines as markdown requires. */
+function insertBlock(text: string): void {
+  const value = editorEl.value;
+  const start = editorEl.selectionStart;
+  const end = editorEl.selectionEnd;
+  const lineStart = start === 0 ? 0 : value.lastIndexOf("\n", start - 1) + 1;
+  const atLineStart = value.slice(lineStart, start).trim() === "";
+  const prevLineStart = lineStart > 0 ? value.lastIndexOf("\n", lineStart - 2) + 1 : 0;
+  const prevBlank =
+    lineStart === 0 || value.slice(prevLineStart, lineStart).trim() === "";
+  const lead = atLineStart ? (prevBlank ? "" : "\n") : "\n\n";
+  const insert = lead + text + "\n";
+  const insertPos = atLineStart ? lineStart : start;
+  editorReplace(insertPos, Math.max(insertPos, end), insert, insertPos + insert.length);
+}
+
+function wrapCode(): void {
+  const start = editorEl.selectionStart;
+  const end = editorEl.selectionEnd;
+  const selected = editorEl.value.slice(start, end);
+  if (selected.includes("\n")) {
+    const fenced = "```\n" + (selected.endsWith("\n") ? selected : selected + "\n") + "```";
+    editorReplace(start, end, fenced, start + 4);
+  } else {
+    wrapSelection("`");
+  }
+}
+
+function insertLink(): void {
+  const start = editorEl.selectionStart;
+  const label = editorEl.value.slice(start, editorEl.selectionEnd) || "text";
+  editorReplace(
+    start,
+    editorEl.selectionEnd,
+    `[${label}](url)`,
+    start + label.length + 3,
+    start + label.length + 6,
+  );
+}
+
+function insertImage(): void {
+  const start = editorEl.selectionStart;
+  const alt = editorEl.value.slice(start, editorEl.selectionEnd) || "alt text";
+  editorReplace(
+    start,
+    editorEl.selectionEnd,
+    `![${alt}](image-path.png)`,
+    start + alt.length + 4,
+    start + alt.length + 18,
+  );
+}
+
+const TABLE_TEMPLATE =
+  "| Column 1 | Column 2 | Column 3 |\n|---|---|---|\n| Cell 1 | Cell 2 | Cell 3 |";
+
+function runEditorCommand(cmd: string): void {
+  // Focus first: execCommand (undo/redo included) only acts on the focused
+  // editable, and clicking a toolbar button moves focus to the button.
+  editorEl.focus();
+  switch (cmd) {
+    case "undo":
+      document.execCommand("undo");
+      break;
+    case "redo":
+      document.execCommand("redo");
+      break;
+    case "bold":
+      wrapSelection("**");
+      break;
+    case "italic":
+      wrapSelection("*");
+      break;
+    case "strikethrough":
+      wrapSelection("~~");
+      break;
+    case "heading":
+      cycleHeadingLevel();
+      break;
+    case "bullet-list":
+      toggleLinePrefix(() => "- ", /^-\s/);
+      break;
+    case "numbered-list":
+      toggleLinePrefix((i) => `${i + 1}. `, /^\d+\.\s/);
+      break;
+    case "task-list":
+      toggleLinePrefix(() => "- [ ] ", /^- \[[ xX]\]\s/);
+      break;
+    case "blockquote":
+      toggleLinePrefix(() => "> ", /^>\s?/);
+      break;
+    case "code":
+      wrapCode();
+      break;
+    case "table":
+      insertBlock(TABLE_TEMPLATE);
+      break;
+    case "link":
+      insertLink();
+      break;
+    case "image":
+      insertImage();
+      break;
+  }
 }
 
 /* ---------- reading position ---------- */
@@ -339,15 +611,24 @@ function enterEditMode(): void {
   editorEl.value = currentFile.content;
   welcome.hidden = true;
   bodyEl.hidden = true;
-  editorEl.hidden = false;
+  showEditorArea();
+  backToTop.classList.remove("visible");
   editorEl.focus();
+  void updateEditorPreview();
   updateStatus();
+  updateStatusCursor();
 }
 
 function exitEditMode(): void {
   if (!isEditing || !currentFile) return;
   isEditing = false;
-  editorEl.hidden = true;
+  previewGeneration++; // drop in-flight preview renders
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+    previewTimer = null;
+  }
+  hideEditorArea();
+  statusCursor.hidden = true;
   currentFile.content = applyFileLineEndings(editorEl.value);
   const gen = ++renderGeneration;
   void renderDocument(currentFile.content, currentFile.dir).then(() => {
@@ -395,7 +676,8 @@ async function openPath(path: string): Promise<void> {
     if (gen !== renderGeneration) return;
     isEditing = false;
     isDirty = false;
-    editorEl.hidden = true;
+    hideEditorArea();
+    statusCursor.hidden = true;
     editorEl.value = "";
     fileUsesCrlf = file.content.includes("\r\n");
     currentFile = file;
@@ -656,6 +938,50 @@ function printDocument(): void {
   window.print();
 }
 
+/* ---------- update check ---------- */
+
+interface UpdateInfo {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  releaseUrl: string | null;
+}
+
+const UPDATE_DISMISS_KEY = "markread.update-dismissed";
+let shownUpdate: UpdateInfo | null = null;
+
+function showUpdateBanner(info: UpdateInfo): void {
+  shownUpdate = info;
+  updateBannerText.textContent = t("updateAvailable", { v: info.latestVersion });
+  updateCloseBtn.title = t("updateDismiss");
+  updateOpenBtn.hidden = !info.releaseUrl;
+  updateBanner.hidden = false;
+}
+
+let updateCheckInFlight = false;
+
+async function runUpdateCheck(manual: boolean): Promise<void> {
+  if (!inTauri || updateCheckInFlight) return;
+  updateCheckInFlight = true;
+  try {
+    const info = await invoke<UpdateInfo>("check_for_updates");
+    if (info.available) {
+      // A dismissed version stays dismissed for automatic checks; a manual
+      // check always shows the banner again.
+      if (!manual && localStorage.getItem(UPDATE_DISMISS_KEY) === info.latestVersion) {
+        return;
+      }
+      showUpdateBanner(info);
+    } else if (manual) {
+      statusHint(t("updateUpToDate", { v: info.currentVersion }));
+    }
+  } catch {
+    if (manual) statusHint(t("updateCheckFailed"));
+  } finally {
+    updateCheckInFlight = false;
+  }
+}
+
 /* ---------- events from the Rust side ---------- */
 
 async function setupListeners(): Promise<void> {
@@ -696,6 +1022,9 @@ async function setupListeners(): Promise<void> {
       case "toggle-outline":
         toggleSidebar();
         break;
+      case "check-updates":
+        void runUpdateCheck(true);
+        break;
     }
   });
 
@@ -715,9 +1044,14 @@ async function setupListeners(): Promise<void> {
     setLanguage(event.payload as Lang);
     applyI18n();
     updateStatus();
+    updateStatusCursor();
     renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
     backToTop.title = t("backToTop");
     backToTop.setAttribute("aria-label", t("backToTop"));
+    if (shownUpdate && !updateBanner.hidden) {
+      updateBannerText.textContent = t("updateAvailable", { v: shownUpdate.latestVersion });
+      updateCloseBtn.title = t("updateDismiss");
+    }
   });
 
   if (inTauri) {
@@ -797,12 +1131,20 @@ async function boot(): Promise<void> {
   applySidebarPreference();
 
   let language = detectLanguage();
+  let lastFolder: string | null = null;
+  let checkUpdatesOnStartup = false;
   if (inTauri) {
     try {
-      const settings = await invoke<{ language: string }>("get_settings");
+      const settings = await invoke<{
+        language: string;
+        lastFolder: string | null;
+        checkUpdatesOnStartup: boolean;
+      }>("get_settings");
       if (["en", "pt-BR", "es"].includes(settings.language)) {
         language = settings.language as Lang;
       }
+      lastFolder = settings.lastFolder;
+      checkUpdatesOnStartup = settings.checkUpdatesOnStartup;
     } catch {
       /* fall back to detected locale */
     }
@@ -826,12 +1168,26 @@ async function boot(): Promise<void> {
   });
   backToTop.title = t("backToTop");
   backToTop.setAttribute("aria-label", t("backToTop"));
+  editorToolbar.setAttribute("aria-label", t("editorToolbarLabel"));
+  editorEl.setAttribute("aria-label", t("editorSourceLabel"));
+  updateCloseBtn.setAttribute("aria-label", t("updateDismiss"));
   setSidebarTab(localStorage.getItem(SIDEBAR_TAB_KEY) === "files" ? "files" : "outline");
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
   });
+  updateOpenBtn.addEventListener("click", () => {
+    if (shownUpdate?.releaseUrl) void openUrl(shownUpdate.releaseUrl);
+  });
+  updateCloseBtn.addEventListener("click", () => {
+    updateBanner.hidden = true;
+    if (shownUpdate) localStorage.setItem(UPDATE_DISMISS_KEY, shownUpdate.latestVersion);
+  });
 
-  editorEl.addEventListener("input", markDirty);
+  editorEl.addEventListener("input", () => {
+    markDirty();
+    schedulePreviewUpdate();
+    updateStatusCursor();
+  });
   editorEl.addEventListener("keydown", (ev) => {
     if (ev.key === "Tab") {
       ev.preventDefault();
@@ -842,10 +1198,32 @@ async function boot(): Promise<void> {
         "end",
       );
       markDirty();
+      schedulePreviewUpdate();
     } else if (ev.key === "Escape") {
       ev.preventDefault();
       exitEditMode();
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "b") {
+      ev.preventDefault();
+      runEditorCommand("bold");
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "i") {
+      ev.preventDefault();
+      runEditorCommand("italic");
     }
+  });
+  editorEl.addEventListener("scroll", () => {
+    // Proportional source → preview scroll sync (editor is the master).
+    const editorMax = editorEl.scrollHeight - editorEl.clientHeight;
+    if (editorMax <= 0) return;
+    const ratio = editorEl.scrollTop / editorMax;
+    const preview = editorPreviewScroll;
+    preview.scrollTop = ratio * (preview.scrollHeight - preview.clientHeight);
+  }, { passive: true });
+  document.addEventListener("selectionchange", () => {
+    if (isEditing) updateStatusCursor();
+  });
+  editorToolbar.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-cmd]");
+    if (btn?.dataset.cmd) runEditorCommand(btn.dataset.cmd);
   });
 
   let progressTicking = false;
@@ -883,12 +1261,8 @@ async function boot(): Promise<void> {
     } catch (err) {
       console.error(err);
     }
-    try {
-      const settings = await invoke<{ lastFolder: string | null }>("get_settings");
-      if (settings.lastFolder) await openFolder(settings.lastFolder, { quiet: true });
-    } catch (err) {
-      console.error(err);
-    }
+    if (lastFolder) await openFolder(lastFolder, { quiet: true });
+    if (checkUpdatesOnStartup) void runUpdateCheck(false);
   }
 }
 
