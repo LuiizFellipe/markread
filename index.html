@@ -11,8 +11,15 @@
         <div id="side-header">
           <div id="side-logo" aria-hidden="true">M&#8595;</div>
           <span id="side-title">MarkRead</span>
+          <button type="button" id="side-collapse" data-i18n-title="hideSidebar" title="Hide sidebar" aria-label="Hide sidebar">
+            <svg viewBox="0 0 24 24"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>
+          </button>
         </div>
         <nav id="side-actions" aria-label="Actions">
+          <button type="button" class="side-row" id="act-new-file">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+            <span data-i18n="actNewFile">New file</span><kbd>Ctrl+N</kbd>
+          </button>
           <button type="button" class="side-row" id="act-open">
             <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span data-i18n="actOpenFile">Open file</span><kbd>Ctrl+O</kbd>
@@ -110,6 +117,10 @@
           </select>
         </div>
       </aside>
+      <div id="sidebar-resizer" aria-hidden="true"></div>
+      <button type="button" id="side-float-open" hidden data-i18n-title="showSidebar" title="Show sidebar" aria-label="Show sidebar">
+        <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
       <div id="content-wrap">
         <div id="update-banner" role="status" hidden>
           <span id="update-banner-text"></span>
@@ -136,6 +147,7 @@
             <h1 data-i18n="welcomeTitle">MarkRead</h1>
             <p id="welcome-subtitle" data-i18n="welcomeSubtitle">A clean Markdown reader</p>
             <button id="welcome-open" data-i18n="openFile">Open File&#8230;</button>
+            <button id="welcome-new" class="welcome-secondary" data-i18n="actNewFile">New file</button>
             <button id="welcome-folder" class="welcome-secondary" data-i18n="openFolder">Open Folder&#8230;</button>
             <p id="welcome-drop" data-i18n="dropHint">Drop a .md file here, or press Ctrl+O</p>
           </section>

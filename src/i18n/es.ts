@@ -57,4 +57,8 @@ export const dict: Record<string, string> = {
   actSave: "Guardar",
   actPrint: "Imprimir",
   actZoom: "Zoom",
+  actNewFile: "Nuevo archivo",
+  newFileUntitled: "sin-titulo.md",
+  hideSidebar: "Ocultar barra lateral",
+  showSidebar: "Mostrar barra lateral",
 };

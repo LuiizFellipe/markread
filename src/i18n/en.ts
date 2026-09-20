@@ -57,4 +57,8 @@ export const dict = {
   actSave: "Save",
   actPrint: "Print",
   actZoom: "Zoom",
+  actNewFile: "New file",
+  newFileUntitled: "untitled.md",
+  hideSidebar: "Hide sidebar",
+  showSidebar: "Show sidebar",
 };

@@ -105,6 +105,32 @@ pub fn write_markdown_file(path: String, content: String) -> Result<FileInfo, St
     read_markdown_file(path)
 }
 
+/// Open-or-create for the "New file" action: an empty markdown file is
+/// written only when the path does not exist yet, so an existing file is
+/// never clobbered (it is returned and simply opened instead). The
+/// create_new flag makes that check atomic and refuses to write through
+/// a planted symlink.
+#[tauri::command]
+pub fn create_markdown_file(path: String) -> Result<FileInfo, String> {
+    let file_path = PathBuf::from(&path);
+    if !has_markdown_ext(&file_path) {
+        return Err(format!("not a markdown file: {path}"));
+    }
+    if let Some(parent) = file_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let created = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file_path);
+    match created {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err.to_string()),
+    }
+    read_markdown_file(path)
+}
+
 #[tauri::command]
 pub fn get_recent_files(app: AppHandle) -> Vec<String> {
     settings::load(&app)

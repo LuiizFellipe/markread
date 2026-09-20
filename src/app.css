@@ -61,7 +61,8 @@ body {
 /* ---------- Sidebar (ZCode-style: actions, groups, footer) ---------- */
 
 #sidebar {
-  width: 276px;
+  width: var(--sidebar-width, 276px);
+  box-sizing: border-box;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -74,6 +75,67 @@ body {
 
 #sidebar[hidden] {
   display: none;
+}
+
+/* Drag handle between sidebar and content: hidden while the sidebar is. */
+#sidebar-resizer {
+  width: 5px;
+  flex-shrink: 0;
+  margin-left: -2px;
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 5;
+}
+
+#sidebar-resizer:hover,
+#sidebar-resizer.dragging {
+  background: var(--accent-soft);
+}
+
+#sidebar[hidden] + #sidebar-resizer {
+  display: none;
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* Floating hamburger shown only while the sidebar is hidden. */
+#side-float-open {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--fg);
+  cursor: pointer;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+#side-float-open[hidden] {
+  display: none;
+}
+
+#side-float-open:hover {
+  background: var(--accent-soft);
+}
+
+#side-float-open svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 /* Flex children must keep their content height: shrinking them makes the
@@ -105,6 +167,35 @@ body {
 #side-title {
   font-size: 14px;
   font-weight: 600;
+}
+
+#side-collapse {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#side-collapse:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+#side-collapse svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 #side-actions {
@@ -1057,6 +1148,8 @@ body.dragging-file::after {
   }
 
   #sidebar,
+  #sidebar-resizer,
+  #side-float-open,
   #statusbar,
   #findbar,
   #update-banner,

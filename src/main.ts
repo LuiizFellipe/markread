@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ask, message, open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { ask, message, open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./app.css";
 import "github-markdown-css/github-markdown-light.css";
@@ -79,6 +79,10 @@ const groupOutline = $<HTMLElement>("#group-outline");
 const groupFiles = $<HTMLElement>("#group-files");
 const groupRecents = $<HTMLElement>("#group-recents");
 const welcomeFolder = $<HTMLButtonElement>("#welcome-folder");
+const welcomeNew = $<HTMLButtonElement>("#welcome-new");
+const sideCollapse = $<HTMLButtonElement>("#side-collapse");
+const sideFloatOpen = $<HTMLButtonElement>("#side-float-open");
+const sidebarResizer = $<HTMLElement>("#sidebar-resizer");
 const folderNameEl = $<HTMLElement>("#folder-name");
 const folderSearchInput = $<HTMLInputElement>("#folder-search");
 const fileListEl = $<HTMLElement>("#file-list");
@@ -673,11 +677,11 @@ async function saveFile(): Promise<void> {
   }
 }
 
-async function openPath(path: string): Promise<void> {
-  if (!(await confirmDiscardChanges())) return;
+async function openPath(path: string): Promise<FileInfo | null> {
+  if (!(await confirmDiscardChanges())) return null;
   const gen = ++renderGeneration;
   await saveReadingPositionNow();
-  if (gen !== renderGeneration) return;
+  if (gen !== renderGeneration) return null;
   try {
     const savedPosition: Promise<ReadingPosition | null> = inTauri
       ? invoke<ReadingPosition | null>("get_reading_position", { path }).catch(() => null)
@@ -686,7 +690,7 @@ async function openPath(path: string): Promise<void> {
       invoke<FileInfo>("read_markdown_file", { path }),
       savedPosition,
     ]);
-    if (gen !== renderGeneration) return;
+    if (gen !== renderGeneration) return null;
     isEditing = false;
     isDirty = false;
     hideEditorArea();
@@ -696,7 +700,7 @@ async function openPath(path: string): Promise<void> {
     currentFile = file;
     updateGroupVisibility();
     await renderDocument(file.content, file.dir);
-    if (gen !== renderGeneration) return;
+    if (gen !== renderGeneration) return null;
     showDocument();
     updateStatus();
     restoreScroll(scrollPane, bodyEl, {
@@ -708,7 +712,7 @@ async function openPath(path: string): Promise<void> {
     updateReadingProgress();
     if (inTauri) {
       await getCurrentWindow().setTitle(`${file.name} — MarkRead`);
-      if (gen !== renderGeneration) return;
+      if (gen !== renderGeneration) return null;
       await invoke("push_recent_file", { path });
       void refreshRecents();
       highlightActiveFile();
@@ -718,8 +722,10 @@ async function openPath(path: string): Promise<void> {
         /* auto-reload unavailable for this path — reading still works */
       }
     }
+    return file;
   } catch (err) {
     if (gen === renderGeneration) await showError(err);
+    return null;
   }
 }
 
@@ -782,22 +788,107 @@ const OUTLINE_KEY = "markread.outline";
 function applySidebarPreference(): void {
   // The sidebar is the main navigation now: visible unless explicitly hidden.
   sidebar.hidden = localStorage.getItem(OUTLINE_KEY) === "0";
+  sideFloatOpen.hidden = !sidebar.hidden;
 }
 
 function toggleSidebar(): void {
   sidebar.hidden = !sidebar.hidden;
   localStorage.setItem(OUTLINE_KEY, sidebar.hidden ? "0" : "1");
+  sideFloatOpen.hidden = !sidebar.hidden;
 }
 
 function revealSidebar(): void {
   sidebar.hidden = false;
   localStorage.setItem(OUTLINE_KEY, "1");
+  sideFloatOpen.hidden = true;
 }
 
 function updateGroupVisibility(): void {
   groupOutline.hidden = !currentFile;
   groupFiles.hidden = !workspaceDir;
   groupRecents.hidden = false;
+}
+
+/* ---------- sidebar resize ---------- */
+
+const SIDEBAR_WIDTH_KEY = "markread.sidebar-width";
+const SIDEBAR_WIDTH_DEFAULT = 276;
+const SIDEBAR_MIN = 220;
+const SIDEBAR_MAX = 480;
+
+function applySidebarWidth(px: number, persist = true): void {
+  const width = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(px)));
+  document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+  if (persist) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+}
+
+function setupSidebarResize(): void {
+  const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  const saved = raw === null ? NaN : Number(raw);
+  applySidebarWidth(Number.isFinite(saved) ? saved : SIDEBAR_WIDTH_DEFAULT, false);
+
+  let dragging = false;
+  sidebarResizer.addEventListener("pointerdown", (ev) => {
+    dragging = true;
+    sidebarResizer.classList.add("dragging");
+    sidebarResizer.setPointerCapture(ev.pointerId);
+    document.body.classList.add("resizing");
+  });
+  sidebarResizer.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    // Live update is visual only; persisting on every move would hammer
+    // localStorage ~60×/s.
+    applySidebarWidth(ev.clientX, false);
+  });
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    sidebarResizer.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+    const width = parseInt(
+      document.documentElement.style.getPropertyValue("--sidebar-width"),
+      10,
+    );
+    if (Number.isFinite(width)) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  };
+  sidebarResizer.addEventListener("pointerup", endDrag);
+  sidebarResizer.addEventListener("pointercancel", endDrag);
+  sidebarResizer.addEventListener("dblclick", () => {
+    applySidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+  });
+}
+
+/* ---------- new file ---------- */
+
+function joinPath(dir: string, name: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  const trimmed = dir.endsWith("\\") || dir.endsWith("/") ? dir.slice(0, -1) : dir;
+  return `${trimmed}${sep}${name}`;
+}
+
+/** New file: pick a path (defaults to the open workspace / current folder),
+ *  create it when missing and open it straight into edit mode. */
+async function createNewFile(): Promise<void> {
+  if (!inTauri) return;
+  const defaultDir = workspaceDir ?? currentFile?.dir ?? null;
+  const defaultPath = defaultDir
+    ? joinPath(defaultDir, t("newFileUntitled"))
+    : t("newFileUntitled");
+  const path = await saveFileDialog({
+    defaultPath,
+    title: t("actNewFile"),
+    filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd"] }],
+  });
+  if (typeof path !== "string") return;
+  try {
+    const file = await invoke<FileInfo>("create_markdown_file", { path });
+    // Only enter edit mode when the open actually happened — if the user
+    // cancelled the unsaved-changes prompt, their buffer must survive.
+    const opened = await openPath(file.path);
+    if (opened && currentFile && currentFile.path === opened.path) enterEditMode();
+  } catch (err) {
+    await showError(err);
+  }
 }
 
 /* ---------- folder mode (light workspace) ---------- */
@@ -1064,6 +1155,10 @@ async function setupListeners(): Promise<void> {
     renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
     backToTop.title = t("backToTop");
     backToTop.setAttribute("aria-label", t("backToTop"));
+    sideCollapse.title = t("hideSidebar");
+    sideCollapse.setAttribute("aria-label", t("hideSidebar"));
+    sideFloatOpen.title = t("showSidebar");
+    sideFloatOpen.setAttribute("aria-label", t("showSidebar"));
     if (shownUpdate && !updateBanner.hidden) {
       updateBannerText.textContent = t("updateAvailable", { v: shownUpdate.latestVersion });
       updateCloseBtn.title = t("updateDismiss");
@@ -1116,6 +1211,9 @@ function setupKeyboardShortcuts(): void {
     } else if (ev.key === "o") {
       ev.preventDefault();
       void runOpenDialog();
+    } else if (ev.key === "n") {
+      ev.preventDefault();
+      void createNewFile();
     } else if (ev.key === "f" && !bodyEl.hidden) {
       ev.preventDefault();
       search.open();
@@ -1197,6 +1295,8 @@ async function boot(): Promise<void> {
 
   welcomeOpen.addEventListener("click", () => void runOpenDialog());
   welcomeFolder.addEventListener("click", () => void openFolderDialog());
+  welcomeNew.addEventListener("click", () => void createNewFile());
+  $<HTMLButtonElement>("#act-new-file").addEventListener("click", () => void createNewFile());
   $<HTMLButtonElement>("#act-open").addEventListener("click", () => void runOpenDialog());
   $<HTMLButtonElement>("#act-open-folder").addEventListener("click", () => void openFolderDialog());
   $<HTMLButtonElement>("#act-find").addEventListener("click", () => {
@@ -1208,6 +1308,16 @@ async function boot(): Promise<void> {
   });
   $<HTMLButtonElement>("#act-save").addEventListener("click", () => void saveFile());
   $<HTMLButtonElement>("#act-print").addEventListener("click", () => printDocument());
+  sideCollapse.addEventListener("click", () => toggleSidebar());
+  sideFloatOpen.addEventListener("click", () => toggleSidebar());
+  const syncSidebarButtonTitles = () => {
+    sideCollapse.title = t("hideSidebar");
+    sideCollapse.setAttribute("aria-label", t("hideSidebar"));
+    sideFloatOpen.title = t("showSidebar");
+    sideFloatOpen.setAttribute("aria-label", t("showSidebar"));
+  };
+  syncSidebarButtonTitles();
+  setupSidebarResize();
   $<HTMLButtonElement>("#zoom-in-btn").addEventListener("click", () => changeZoom(0.1));
   $<HTMLButtonElement>("#zoom-out-btn").addEventListener("click", () => changeZoom(-0.1));
   $<HTMLButtonElement>("#zoom-reset-btn").addEventListener("click", () => {
