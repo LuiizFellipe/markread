@@ -69,6 +69,7 @@ const clearRecentBtn = $<HTMLButtonElement>("#clear-recent");
 const statusFile = $<HTMLElement>("#status-file");
 const statusMeta = $<HTMLElement>("#status-meta");
 const statusCursor = $<HTMLElement>("#status-cursor");
+const statusSave = $<HTMLElement>("#status-save");
 const progressEl = $<HTMLElement>("#reading-progress");
 const backToTop = $<HTMLButtonElement>("#back-to-top");
 const editorArea = $<HTMLElement>("#editor-area");
@@ -101,6 +102,14 @@ let headings: Heading[] = [];
 let currentFile: FileInfo | null = null;
 let isEditing = false;
 let isDirty = false;
+/** True while currentFile is the in-memory "new file" buffer (path: ""). */
+let isUntitled = false;
+/** Bumped on every buffer mutation; lets a finished save tell whether edits
+ *  landed while the write was in flight (they must stay dirty). */
+let editSeq = 0;
+/** Content the app last read from / wrote to disk, for auto-save conflict
+ *  detection (an external write in between must not be clobbered). */
+let lastSavedContent: string | null = null;
 let fileUsesCrlf = false;
 let hasMermaid = false;
 /** Bumped on every committed render; async render pipelines abort after
@@ -183,8 +192,9 @@ function updateStatus(): void {
     statusMeta.textContent = "";
     return;
   }
-  statusFile.textContent = currentFile.name;
-  statusFile.title = currentFile.path;
+  statusFile.textContent = isUntitled ? t("statusUntitled") : currentFile.name;
+  if (currentFile.path) statusFile.title = currentFile.path;
+  else statusFile.removeAttribute("title");
   const words = countWords(isEditing ? editorEl.value : currentFile.content);
   const meta = [
     t("statusWords", { n: words.toLocaleString() }),
@@ -249,23 +259,43 @@ async function showError(err: unknown): Promise<void> {
 
 function updateWindowTitle(): void {
   if (!inTauri || !currentFile) return;
+  const name = isUntitled ? t("statusUntitled") : currentFile.name;
   const dirtyMark = isDirty ? "• " : "";
   void getCurrentWindow()
-    .setTitle(`${dirtyMark}${currentFile.name} — MarkRead`)
+    .setTitle(`${dirtyMark}${name} — MarkRead`)
     .catch(() => {});
 }
 
 function markDirty(): void {
+  editSeq++;
   if (!isDirty) {
     isDirty = true;
     updateWindowTitle();
   }
+  scheduleAutosave();
   updateStatus();
 }
 
-/** Whether pending edits may be discarded (false = cancel the action). */
+/** Whether the untitled buffer carries no content worth prompting for. */
+function untitledBufferEmpty(): boolean {
+  if (!currentFile) return true;
+  return (isEditing ? editorEl.value : currentFile.content).trim() === "";
+}
+
+/** Whether pending edits may be discarded (false = cancel the action).
+ *  An untitled buffer is offered a save dialog; cancelling that keeps the
+ *  buffer instead of silently discarding it. */
 async function confirmDiscardChanges(): Promise<boolean> {
   if (!isDirty || !inTauri) return true;
+  if (isUntitled) {
+    if (untitledBufferEmpty()) return true;
+    const save = await ask(t("unsavedUntitledMessage"), {
+      title: t("unsavedTitle"),
+      kind: "warning",
+    });
+    if (!save) return false;
+    return saveFileAs();
+  }
   return ask(t("unsavedMessage"), {
     title: t("unsavedTitle"),
     kind: "warning",
@@ -381,6 +411,40 @@ function selectionLineRange(): [number, number] {
   let lineEnd = value.indexOf("\n", editorEl.selectionEnd);
   if (lineEnd === -1) lineEnd = value.length;
   return [lineStart, lineEnd];
+}
+
+/** List markers that continue on Enter: indent + bullet or ordered number,
+ *  plus an optional checkbox. Headings/blockquotes (LINE_MARKER) and plain
+ *  "-" without a space intentionally do not continue. */
+const LIST_MARKER = /^([ \t]*)(?:([-*+])|(\d+)([.)]))[ \t]+(\[[ xX]][ \t]+)?/;
+
+/** Enter inside a list item continues the list: same indent, same bullet,
+ *  checkbox reset to unchecked, ordered number incremented. Enter on an
+ *  empty item drops the marker and leaves the list. True = key handled. */
+function continueListOnEnter(): boolean {
+  const value = editorEl.value;
+  const anchor = editorEl.selectionStart;
+  const lineStart = anchor === 0 ? 0 : value.lastIndexOf("\n", anchor - 1) + 1;
+  let lineEnd = value.indexOf("\n", anchor);
+  if (lineEnd === -1) lineEnd = value.length;
+  const match = LIST_MARKER.exec(value.slice(lineStart, lineEnd));
+  if (!match) return false;
+  const [, indent, bullet, num, delim, checkbox] = match;
+  if (value.slice(lineStart + match[0].length, lineEnd).trim() === "") {
+    // Empty item: pressing Enter again exits the list instead of spawning
+    // another empty marker. Swallow the newline too, so no blank line is
+    // left behind inside (or after) the list.
+    const removeEnd = lineEnd < value.length ? lineEnd + 1 : lineEnd;
+    editorReplace(lineStart, removeEnd, "", lineStart, lineStart);
+    return true;
+  }
+  const next = bullet
+    ? `${indent}${bullet} ${checkbox ? "[ ] " : ""}`
+    : `${indent}${Number(num) + 1}${delim} ${checkbox ? "[ ] " : ""}`;
+  const start = editorEl.selectionStart;
+  const text = `\n${next}`;
+  editorReplace(start, editorEl.selectionEnd, text, start + text.length);
+  return true;
 }
 
 function toggleLinePrefix(
@@ -543,7 +607,7 @@ async function saveReadingPositionNow(): Promise<void> {
     clearTimeout(positionSaveTimer);
     positionSaveTimer = null;
   }
-  if (!inTauri || !currentFile || bodyEl.hidden) return;
+  if (!inTauri || !currentFile || isUntitled || bodyEl.hidden) return;
   try {
     const snap = currentScrollSnapshot();
     await invoke("set_reading_position", {
@@ -559,7 +623,7 @@ async function saveReadingPositionNow(): Promise<void> {
 }
 
 function scheduleSaveReadingPosition(): void {
-  if (!inTauri || !currentFile) return;
+  if (!inTauri || !currentFile || isUntitled) return;
   if (positionSaveTimer) clearTimeout(positionSaveTimer);
   positionSaveTimer = setTimeout(() => void saveReadingPositionNow(), POSITION_SAVE_DEBOUNCE);
 }
@@ -587,16 +651,16 @@ function statusHint(text: string): void {
 
 async function reloadCurrentFile(): Promise<void> {
   if (!currentFile) return;
-  const gen = ++renderGeneration;
   const path = currentFile.path;
   let file: FileInfo;
   try {
     file = await invoke<FileInfo>("read_markdown_file", { path });
   } catch {
-    if (gen === renderGeneration) statusHint(t("fileUnavailable"));
+    if (currentFile && currentFile.path === path) statusHint(t("fileUnavailable"));
     return;
   }
-  if (gen !== renderGeneration || !currentFile || currentFile.path !== path) return;
+  // The document may have switched while reading; only the live one reloads.
+  if (!currentFile || currentFile.path !== path) return;
   // Same content on disk: our own save round-tripping through the watcher.
   if (file.content === currentFile.content) return;
   if (isEditing) {
@@ -604,6 +668,11 @@ async function reloadCurrentFile(): Promise<void> {
     statusHint(t("fileChangedOnDisk"));
     return;
   }
+  // Confirmed external change: only now claim the render pipeline. Bumping
+  // earlier would abort unrelated in-flight renders (e.g. the one that
+  // follows exitEditMode while our own save echoes through the watcher).
+  const gen = ++renderGeneration;
+  lastSavedContent = file.content;
   const snapshot = currentScrollSnapshot();
   fileUsesCrlf = file.content.includes("\r\n");
   currentFile = file;
@@ -647,6 +716,9 @@ function exitEditMode(): void {
   hideEditorArea();
   statusCursor.hidden = true;
   currentFile.content = applyFileLineEndings(editorEl.value);
+  // Back to reading: persist right away instead of waiting for the debounce.
+  cancelAutosave();
+  if (isDirty && !isUntitled) void saveFile({ auto: true });
   const gen = ++renderGeneration;
   void renderDocument(currentFile.content, currentFile.dir).then(() => {
     if (gen !== renderGeneration || isEditing) return;
@@ -656,29 +728,166 @@ function exitEditMode(): void {
   });
 }
 
-async function saveFile(): Promise<void> {
+/* ---------- auto-save + save indicator ---------- */
+
+const AUTOSAVE_DEBOUNCE = 1000;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Only documents that already live on disk auto-save; the untitled buffer
+ *  stays manual until the user picks a path (Ctrl+S → save dialog). */
+function scheduleAutosave(): void {
+  if (!inTauri || !currentFile || isUntitled) return;
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => void saveFile({ auto: true }), AUTOSAVE_DEBOUNCE);
+}
+
+function cancelAutosave(): void {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+}
+
+let saveIndicatorTimer: ReturnType<typeof setTimeout> | null = null;
+
+function setSaveIndicator(state: "saving" | "saved" | "error" | "idle"): void {
+  if (saveIndicatorTimer) {
+    clearTimeout(saveIndicatorTimer);
+    saveIndicatorTimer = null;
+  }
+  if (state === "idle") {
+    statusSave.hidden = true;
+    return;
+  }
+  statusSave.textContent = t(
+    state === "saving" ? "statusSaving" : state === "error" ? "statusSaveFailed" : "statusSaved",
+  );
+  statusSave.dataset.state = state;
+  statusSave.hidden = false;
+  if (state === "saved") {
+    saveIndicatorTimer = setTimeout(() => {
+      saveIndicatorTimer = null;
+      statusSave.hidden = true;
+    }, 2000);
+  }
+}
+
+/** Leave the current document safely: flush a pending auto-save, then fall
+ *  back to the discard prompt for whatever is still unsaved (an untitled
+ *  buffer gets a save dialog instead). False = the user cancelled. */
+async function guardDocumentSwitch(): Promise<boolean> {
+  cancelAutosave();
+  if (isDirty && currentFile && !isUntitled) await saveFile({ auto: true });
+  if (!isDirty) return true;
+  return confirmDiscardChanges();
+}
+
+async function saveFile(opts: { auto?: boolean } = {}): Promise<void> {
   if (!currentFile) return;
+  if (isUntitled) {
+    await saveFileAs();
+    return;
+  }
+  cancelAutosave();
+  const target = currentFile;
+  const seq = editSeq;
   const content = isEditing
     ? applyFileLineEndings(editorEl.value)
-    : currentFile.content;
-  currentFile.content = content;
+    : target.content;
+  target.content = content;
   if (!inTauri) return;
+  setSaveIndicator("saving");
   try {
+    // An auto-save must never clobber edits made outside the app since our
+    // last write; a manual save is explicit user intent and writes anyway.
+    if (opts.auto && lastSavedContent !== null) {
+      const disk = await invoke<FileInfo>("read_markdown_file", { path: target.path });
+      if (currentFile !== target) return;
+      if (disk.content !== lastSavedContent) {
+        setSaveIndicator("error");
+        statusHint(t("fileChangedOnDisk"));
+        return;
+      }
+    }
     const file = await invoke<FileInfo>("write_markdown_file", {
-      path: currentFile.path,
+      path: target.path,
       content,
     });
+    // The document may have switched while the write was in flight; only
+    // the document that started the save adopts its result.
+    if (currentFile !== target) return;
     currentFile = file;
-    isDirty = false;
+    isDirty = seq !== editSeq;
+    lastSavedContent = file.content;
+    setSaveIndicator("saved");
     updateWindowTitle();
     updateStatus();
   } catch (err) {
+    if (currentFile !== target) return;
+    setSaveIndicator("error");
+    // A background auto-save must not interrupt with a modal; the dirty
+    // flag stays set so nothing is lost.
+    if (opts.auto) return;
     await message(String(err), { title: t("saveErrorTitle"), kind: "error" });
   }
 }
 
+/** Save the untitled buffer through a dialog; returns whether it landed. */
+async function saveFileAs(): Promise<boolean> {
+  if (!currentFile || !inTauri) return false;
+  const defaultDir = workspaceDir ?? (currentFile.dir || null);
+  const defaultPath = defaultDir
+    ? joinPath(defaultDir, t("newFileUntitled"))
+    : t("newFileUntitled");
+  const path = await saveFileDialog({
+    defaultPath,
+    title: t("actSave"),
+    filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd"] }],
+  });
+  if (typeof path !== "string") return false;
+  // Overwriting an existing file keeps its line endings; a new file is LF.
+  try {
+    const existing = await invoke<FileInfo>("read_markdown_file", { path });
+    fileUsesCrlf = existing.content.includes("\r\n");
+  } catch {
+    fileUsesCrlf = false;
+  }
+  const seq = editSeq;
+  const content = isEditing
+    ? applyFileLineEndings(editorEl.value)
+    : currentFile.content;
+  currentFile.content = content;
+  setSaveIndicator("saving");
+  try {
+    const file = await invoke<FileInfo>("write_markdown_file", { path, content });
+    currentFile = file;
+    isUntitled = false;
+    isDirty = seq !== editSeq;
+    lastSavedContent = file.content;
+    setSaveIndicator("saved");
+    updateWindowTitle();
+    updateStatus();
+    updateGroupVisibility();
+    try {
+      await invoke("watch_file", { path });
+    } catch {
+      /* auto-reload unavailable for this path — editing still works */
+    }
+    await invoke("push_recent_file", { path });
+    void refreshRecents();
+    highlightActiveFile();
+    // Edits typed while the dialog/write were open need a new auto-save.
+    if (isDirty) scheduleAutosave();
+    return true;
+  } catch (err) {
+    setSaveIndicator("error");
+    await message(String(err), { title: t("saveErrorTitle"), kind: "error" });
+    return false;
+  }
+}
+
 async function openPath(path: string): Promise<FileInfo | null> {
-  if (!(await confirmDiscardChanges())) return null;
+  if (!(await guardDocumentSwitch())) return null;
   const gen = ++renderGeneration;
   await saveReadingPositionNow();
   if (gen !== renderGeneration) return null;
@@ -693,6 +902,7 @@ async function openPath(path: string): Promise<FileInfo | null> {
     if (gen !== renderGeneration) return null;
     isEditing = false;
     isDirty = false;
+    lastSavedContent = file.content;
     hideEditorArea();
     statusCursor.hidden = true;
     editorEl.value = "";
@@ -866,29 +1076,26 @@ function joinPath(dir: string, name: string): string {
   return `${trimmed}${sep}${name}`;
 }
 
-/** New file: pick a path (defaults to the open workspace / current folder),
- *  create it when missing and open it straight into edit mode. */
+/** New file: an in-memory untitled buffer the user can type into right away.
+ *  Nothing touches the disk until the buffer is saved explicitly (Ctrl+S →
+ *  save dialog), so "New file" never opens a dialog first. */
 async function createNewFile(): Promise<void> {
-  if (!inTauri) return;
-  const defaultDir = workspaceDir ?? currentFile?.dir ?? null;
-  const defaultPath = defaultDir
-    ? joinPath(defaultDir, t("newFileUntitled"))
-    : t("newFileUntitled");
-  const path = await saveFileDialog({
-    defaultPath,
-    title: t("actNewFile"),
-    filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd"] }],
-  });
-  if (typeof path !== "string") return;
-  try {
-    const file = await invoke<FileInfo>("create_markdown_file", { path });
-    // Only enter edit mode when the open actually happened — if the user
-    // cancelled the unsaved-changes prompt, their buffer must survive.
-    const opened = await openPath(file.path);
-    if (opened && currentFile && currentFile.path === opened.path) enterEditMode();
-  } catch (err) {
-    await showError(err);
-  }
+  if (!(await guardDocumentSwitch())) return;
+  renderGeneration++; // drop in-flight renders for the previous document
+  isUntitled = true;
+  isDirty = false;
+  editSeq = 0;
+  fileUsesCrlf = false;
+  currentFile = {
+    path: "",
+    name: t("statusUntitled"),
+    dir: workspaceDir ?? currentFile?.dir ?? "",
+    content: "",
+    size: 0,
+  };
+  enterEditMode();
+  updateGroupVisibility();
+  updateWindowTitle();
 }
 
 /* ---------- folder mode (light workspace) ---------- */
@@ -1150,7 +1357,9 @@ async function setupListeners(): Promise<void> {
     setLanguage(event.payload as Lang);
     langSelect.value = event.payload as Lang;
     applyI18n();
+    setSaveIndicator("idle"); // transient label would be in the old language
     updateStatus();
+    updateWindowTitle();
     updateStatusCursor();
     renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
     backToTop.title = t("backToTop");
@@ -1172,7 +1381,7 @@ async function setupListeners(): Promise<void> {
       event.preventDefault();
       try {
         await saveReadingPositionNow();
-        if (isDirty && !(await confirmDiscardChanges())) return;
+        if (!(await guardDocumentSwitch())) return;
         isDirty = false;
       } catch {
         // A failed save or dialog must never leave the window uncloseable.
@@ -1398,6 +1607,16 @@ async function boot(): Promise<void> {
       );
       markDirty();
       schedulePreviewUpdate();
+    } else if (
+      ev.key === "Enter" &&
+      !ev.isComposing &&
+      !ev.shiftKey &&
+      !ev.ctrlKey &&
+      !ev.metaKey &&
+      !ev.altKey &&
+      continueListOnEnter()
+    ) {
+      ev.preventDefault();
     } else if (ev.key === "Escape") {
       ev.preventDefault();
       exitEditMode();

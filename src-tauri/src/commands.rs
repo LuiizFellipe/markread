@@ -101,32 +101,22 @@ pub fn write_markdown_file(path: String, content: String) -> Result<FileInfo, St
     if !has_markdown_ext(&file_path) {
         return Err(format!("not a markdown file: {path}"));
     }
-    fs::write(&file_path, content.as_bytes()).map_err(|e| e.to_string())?;
-    read_markdown_file(path)
-}
-
-/// Open-or-create for the "New file" action: an empty markdown file is
-/// written only when the path does not exist yet, so an existing file is
-/// never clobbered (it is returned and simply opened instead). The
-/// create_new flag makes that check atomic and refuses to write through
-/// a planted symlink.
-#[tauri::command]
-pub fn create_markdown_file(path: String) -> Result<FileInfo, String> {
-    let file_path = PathBuf::from(&path);
-    if !has_markdown_ext(&file_path) {
-        return Err(format!("not a markdown file: {path}"));
+    // Write-then-rename in the same directory: a crash mid-save cannot leave
+    // the file truncated, and the watcher already tolerates rename saves.
+    let tmp = file_path.with_extension(format!(
+        "{}~",
+        file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("md")
+    ));
+    if let Err(err) = fs::write(&tmp, content.as_bytes()) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err.to_string());
     }
-    if let Some(parent) = file_path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let created = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&file_path);
-    match created {
-        Ok(_) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(err.to_string()),
+    if let Err(err) = fs::rename(&tmp, &file_path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err.to_string());
     }
     read_markdown_file(path)
 }

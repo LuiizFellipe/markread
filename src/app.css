@@ -1094,6 +1094,21 @@ mark[data-search].current {
   text-overflow: ellipsis;
 }
 
+#status-save {
+  white-space: nowrap;
+  margin-left: 12px;
+  opacity: 0.9;
+}
+
+#status-save[data-state="error"] {
+  color: var(--accent);
+  opacity: 1;
+}
+
+#status-save[hidden] {
+  display: none;
+}
+
 #status-cursor {
   white-space: nowrap;
   margin-left: 12px;
