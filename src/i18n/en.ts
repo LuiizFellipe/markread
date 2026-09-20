@@ -50,4 +50,11 @@ export const dict = {
   statusCursor: "Ln {l}, Col {c}",
   editorToolbarLabel: "Formatting",
   editorSourceLabel: "Markdown source",
+  actOpenFile: "Open file",
+  actOpenFolder: "Open folder",
+  actFind: "Find",
+  actEdit: "Edit",
+  actSave: "Save",
+  actPrint: "Print",
+  actZoom: "Zoom",
 };

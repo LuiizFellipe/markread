@@ -16,7 +16,7 @@ import {
   renderOutline,
   type Heading,
 } from "./outline";
-import { initTheme, setThemePreference, type ThemePreference } from "./theme";
+import { getThemePreference, initTheme, setThemePreference, type ThemePreference } from "./theme";
 import { countWords, formatBytes, readingMinutes } from "./status";
 import { renderMermaidBlocks } from "./mermaid";
 import {
@@ -37,6 +37,7 @@ import {
 }
 
 const inTauri = "__TAURI_INTERNALS__" in window;
+const isMac = /mac/i.test(navigator.platform);
 
 interface FileInfo {
   path: string;
@@ -74,14 +75,16 @@ const editorArea = $<HTMLElement>("#editor-area");
 const editorToolbar = $<HTMLElement>("#editor-toolbar");
 const editorPreviewEl = $<HTMLElement>("#editor-preview");
 const editorPreviewScroll = $<HTMLElement>("#editor-preview-scroll");
-const tabOutline = $<HTMLButtonElement>("#tab-outline");
-const tabFiles = $<HTMLButtonElement>("#tab-files");
-const filesPane = $<HTMLElement>("#files-pane");
-const openFolderBtn = $<HTMLButtonElement>("#open-folder-btn");
+const groupOutline = $<HTMLElement>("#group-outline");
+const groupFiles = $<HTMLElement>("#group-files");
+const groupRecents = $<HTMLElement>("#group-recents");
+const welcomeFolder = $<HTMLButtonElement>("#welcome-folder");
 const folderNameEl = $<HTMLElement>("#folder-name");
 const folderSearchInput = $<HTMLInputElement>("#folder-search");
 const fileListEl = $<HTMLElement>("#file-list");
-const welcomeFolder = $<HTMLButtonElement>("#welcome-folder");
+const zoomLabel = $<HTMLElement>("#zoom-label");
+const langSelect = $<HTMLSelectElement>("#lang-select");
+const themeSegment = $<HTMLElement>("#theme-segment");
 const updateBanner = $<HTMLElement>("#update-banner");
 const updateBannerText = $<HTMLElement>("#update-banner-text");
 const updateOpenBtn = $<HTMLButtonElement>("#update-open");
@@ -155,6 +158,16 @@ async function applyZoom(): Promise<void> {
 function changeZoom(delta: number): void {
   zoom = clampZoom(zoom + delta);
   void applyZoom();
+  updateZoomLabel();
+}
+
+/* ---------- sidebar footer controls (theme + language) ---------- */
+
+function syncThemeSegment(): void {
+  const current = getThemePreference();
+  themeSegment.querySelectorAll<HTMLButtonElement>("button[data-theme-pref]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.themePref === current);
+  });
 }
 
 /* ---------- status ---------- */
@@ -681,6 +694,7 @@ async function openPath(path: string): Promise<void> {
     editorEl.value = "";
     fileUsesCrlf = file.content.includes("\r\n");
     currentFile = file;
+    updateGroupVisibility();
     await renderDocument(file.content, file.dir);
     if (gen !== renderGeneration) return;
     showDocument();
@@ -761,13 +775,13 @@ async function runOpenDialog(): Promise<void> {
   if (typeof path === "string") await openPath(path);
 }
 
-/* ---------- sidebar ---------- */
+/* ---------- sidebar (ZCode-style actions + groups) ---------- */
 
 const OUTLINE_KEY = "markread.outline";
-const SIDEBAR_TAB_KEY = "markread.sidebar-tab";
 
 function applySidebarPreference(): void {
-  sidebar.hidden = localStorage.getItem(OUTLINE_KEY) !== "1";
+  // The sidebar is the main navigation now: visible unless explicitly hidden.
+  sidebar.hidden = localStorage.getItem(OUTLINE_KEY) === "0";
 }
 
 function toggleSidebar(): void {
@@ -775,16 +789,18 @@ function toggleSidebar(): void {
   localStorage.setItem(OUTLINE_KEY, sidebar.hidden ? "0" : "1");
 }
 
-/* ---------- folder mode (light workspace) ---------- */
-
-function setSidebarTab(tab: "outline" | "files"): void {
-  const outlineActive = tab === "outline";
-  tabOutline.classList.toggle("active", outlineActive);
-  tabFiles.classList.toggle("active", !outlineActive);
-  outlineEl.classList.toggle("tab-hidden", !outlineActive);
-  filesPane.hidden = outlineActive;
-  localStorage.setItem(SIDEBAR_TAB_KEY, tab);
+function revealSidebar(): void {
+  sidebar.hidden = false;
+  localStorage.setItem(OUTLINE_KEY, "1");
 }
+
+function updateGroupVisibility(): void {
+  groupOutline.hidden = !currentFile;
+  groupFiles.hidden = !workspaceDir;
+  groupRecents.hidden = false;
+}
+
+/* ---------- folder mode (light workspace) ---------- */
 
 async function openFolderDialog(): Promise<void> {
   const dir = inTauri
@@ -808,11 +824,8 @@ async function openFolder(
     folderSearchInput.value = "";
     renderFileList(listing);
     if (inTauri) void invoke("set_last_folder", { path: listing.dir }).catch(() => {});
-    setSidebarTab("files");
-    if (reveal) {
-      sidebar.hidden = false;
-      localStorage.setItem(OUTLINE_KEY, "1");
-    }
+    updateGroupVisibility();
+    if (reveal) revealSidebar();
   } catch (err) {
     // A folder restored from settings that no longer exists must not
     // nag on every launch — forget it silently instead.
@@ -1018,6 +1031,7 @@ async function setupListeners(): Promise<void> {
       case "zoom-reset":
         zoom = 1;
         void applyZoom();
+        updateZoomLabel();
         break;
       case "toggle-outline":
         toggleSidebar();
@@ -1030,6 +1044,7 @@ async function setupListeners(): Promise<void> {
 
   await listen<string>("theme-changed", async (event) => {
     setThemePreference(event.payload as ThemePreference);
+    syncThemeSegment();
     // Mermaid diagrams bake the palette in at render time.
     if (hasMermaid && currentFile && !isEditing) {
       const gen = ++renderGeneration;
@@ -1042,6 +1057,7 @@ async function setupListeners(): Promise<void> {
 
   await listen<string>("language-changed", (event) => {
     setLanguage(event.payload as Lang);
+    langSelect.value = event.payload as Lang;
     applyI18n();
     updateStatus();
     updateStatusCursor();
@@ -1088,13 +1104,16 @@ async function setupListeners(): Promise<void> {
   }
 }
 
-/* ---------- in-browser dev fallback (no native menu available) ---------- */
+/* ---------- keyboard shortcuts (webview) ---------- */
 
-function setupBrowserShortcuts(): void {
+function setupKeyboardShortcuts(): void {
   window.addEventListener("keydown", (ev) => {
     const ctrl = ev.ctrlKey || ev.metaKey;
     if (!ctrl) return;
-    if (ev.key === "o") {
+    if (ev.key === "o" && ev.altKey) {
+      ev.preventDefault();
+      void openFolderDialog();
+    } else if (ev.key === "o") {
       ev.preventDefault();
       void runOpenDialog();
     } else if (ev.key === "f" && !bodyEl.hidden) {
@@ -1110,6 +1129,14 @@ function setupBrowserShortcuts(): void {
     } else if (ev.key === "p") {
       ev.preventDefault();
       printDocument();
+    } else if (ev.key === "q" && inTauri) {
+      // No native menu on Windows/Linux: quit via the close-requested flow
+      // (persists the reading position, honors the dirty guard).
+      ev.preventDefault();
+      void getCurrentWindow().close();
+    } else if (ev.key === "O" && ev.shiftKey) {
+      ev.preventDefault();
+      toggleSidebar();
     } else if (ev.key === "=" || ev.key === "+") {
       ev.preventDefault();
       changeZoom(0.1);
@@ -1120,15 +1147,21 @@ function setupBrowserShortcuts(): void {
       ev.preventDefault();
       zoom = 1;
       void applyZoom();
+      updateZoomLabel();
     }
   });
 }
 
 /* ---------- boot ---------- */
 
+function updateZoomLabel(): void {
+  zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+}
+
 async function boot(): Promise<void> {
   initTheme();
   applySidebarPreference();
+  updateZoomLabel();
 
   let language = detectLanguage();
   let lastFolder: string | null = null;
@@ -1151,14 +1184,67 @@ async function boot(): Promise<void> {
   }
   setLanguage(language);
   applyI18n();
+  langSelect.value = language;
+  // macOS menu accelerators use ⌘ — mirror that in the sidebar hints.
+  if (isMac) {
+    sidebar.querySelectorAll(".side-row kbd").forEach((kbd) => {
+      kbd.textContent = kbd.textContent?.replace("Ctrl+", "⌘") ?? kbd.textContent;
+    });
+  }
   updateStatus();
+  updateGroupVisibility();
   await refreshRecents();
 
   welcomeOpen.addEventListener("click", () => void runOpenDialog());
   welcomeFolder.addEventListener("click", () => void openFolderDialog());
-  openFolderBtn.addEventListener("click", () => void openFolderDialog());
-  tabOutline.addEventListener("click", () => setSidebarTab("outline"));
-  tabFiles.addEventListener("click", () => setSidebarTab("files"));
+  $<HTMLButtonElement>("#act-open").addEventListener("click", () => void runOpenDialog());
+  $<HTMLButtonElement>("#act-open-folder").addEventListener("click", () => void openFolderDialog());
+  $<HTMLButtonElement>("#act-find").addEventListener("click", () => {
+    if (!bodyEl.hidden) search.open();
+  });
+  $<HTMLButtonElement>("#act-edit").addEventListener("click", () => {
+    if (isEditing) exitEditMode();
+    else enterEditMode();
+  });
+  $<HTMLButtonElement>("#act-save").addEventListener("click", () => void saveFile());
+  $<HTMLButtonElement>("#act-print").addEventListener("click", () => printDocument());
+  $<HTMLButtonElement>("#zoom-in-btn").addEventListener("click", () => changeZoom(0.1));
+  $<HTMLButtonElement>("#zoom-out-btn").addEventListener("click", () => changeZoom(-0.1));
+  $<HTMLButtonElement>("#zoom-reset-btn").addEventListener("click", () => {
+    zoom = 1;
+    void applyZoom();
+    updateZoomLabel();
+  });
+
+  themeSegment.querySelectorAll<HTMLButtonElement>("button[data-theme-pref]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setThemePreference(btn.dataset.themePref as ThemePreference);
+      syncThemeSegment();
+    });
+  });
+  syncThemeSegment();
+  langSelect.addEventListener("change", () => {
+    const lang = langSelect.value as Lang;
+    if (inTauri) {
+      void invoke("set_language", { language: lang }).catch(() => {});
+    } else {
+      setLanguage(lang);
+      applyI18n();
+      updateStatus();
+      renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
+    }
+  });
+
+  // Collapsible groups: clicking a header toggles its body.
+  sidebar.addEventListener("click", (ev) => {
+    const header = (ev.target as HTMLElement).closest<HTMLButtonElement>(".group-header");
+    if (!header) return;
+    const group = header.parentElement;
+    if (!group) return;
+    group.classList.toggle("collapsed");
+    header.setAttribute("aria-expanded", group.classList.contains("collapsed") ? "false" : "true");
+  });
+
   folderSearchInput.addEventListener("input", () => {
     if (folderSearchTimer) clearTimeout(folderSearchTimer);
     folderSearchTimer = setTimeout(runFolderSearch, 300);
@@ -1171,7 +1257,6 @@ async function boot(): Promise<void> {
   editorToolbar.setAttribute("aria-label", t("editorToolbarLabel"));
   editorEl.setAttribute("aria-label", t("editorSourceLabel"));
   updateCloseBtn.setAttribute("aria-label", t("updateDismiss"));
-  setSidebarTab(localStorage.getItem(SIDEBAR_TAB_KEY) === "files" ? "files" : "outline");
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
   });
@@ -1245,7 +1330,10 @@ async function boot(): Promise<void> {
     { passive: true },
   );
 
-  if (!inTauri) setupBrowserShortcuts();
+  // Windows/Linux have no native menu anymore — the webview owns the
+  // shortcuts. macOS keeps its native menu (which consumes the equivalents),
+  // so registering here too would double-fire.
+  if (!inTauri || !isMac) setupKeyboardShortcuts();
 
   try {
     await setupListeners();

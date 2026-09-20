@@ -191,6 +191,9 @@ pub fn set_reading_position(
 
 #[tauri::command]
 pub fn set_language(app: AppHandle, language: String) -> Result<(), String> {
+    if !matches!(language.as_str(), "en" | "pt-BR" | "es") {
+        return Err(format!("unsupported language: {language}"));
+    }
     let current = settings::update(&app, |app_settings| {
         app_settings.language = language.clone();
         app_settings.language.clone()

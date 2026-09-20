@@ -1,5 +1,6 @@
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
@@ -8,6 +9,7 @@ use crate::{commands, settings};
 const MAIN_WINDOW: &str = "main";
 
 /// Translated menu labels for the three supported UI languages.
+#[cfg(target_os = "macos")]
 struct Labels {
     file: &'static str,
     open: &'static str,
@@ -17,6 +19,8 @@ struct Labels {
     print: &'static str,
     open_recent: &'static str,
     no_recent: &'static str,
+    #[allow(dead_code)] // legacy: the quit menu item was removed with the
+    // Windows/Linux menu bar; keep the translation key for now
     quit: &'static str,
     view: &'static str,
     theme: &'static str,
@@ -35,6 +39,7 @@ struct Labels {
     about: &'static str,
 }
 
+#[cfg(target_os = "macos")]
 fn labels(lang: &str) -> Labels {
     if lang == "pt-BR" {
         Labels {
@@ -122,7 +127,24 @@ fn labels(lang: &str) -> Labels {
 
 /// (Re)build the application menu from current settings (language, recents).
 /// Called at startup and whenever language or recent files change.
+/// Windows/Linux have no native menu bar at all — navigation lives in the
+/// app sidebar and shortcuts come from the webview — so this is a no-op
+/// there and only the macOS system menu is maintained.
 pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        refresh_macos(app)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn refresh_macos(app: &AppHandle) -> tauri::Result<()> {
     let app_settings = settings::load(app);
     let l = labels(&app_settings.language);
 
@@ -175,12 +197,6 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
     file_menu.append(&print_item)?;
     file_menu.append(&PredefinedMenuItem::separator(app)?)?;
     file_menu.append(&recent_menu)?;
-    #[cfg(not(target_os = "macos"))]
-    {
-        let quit = MenuItem::with_id(app, "quit", l.quit, true, Some("CmdOrCtrl+Q"))?;
-        file_menu.append(&PredefinedMenuItem::separator(app)?)?;
-        file_menu.append(&quit)?;
-    }
 
     let theme_light = MenuItem::with_id(app, "theme-light", l.theme_light, true, None::<&str>)?;
     let theme_dark = MenuItem::with_id(app, "theme-dark", l.theme_dark, true, None::<&str>)?;
@@ -243,16 +259,7 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
     menu.append(&view_menu)?;
     menu.append(&help_menu)?;
 
-    #[cfg(target_os = "macos")]
-    {
-        app.set_menu(menu)?;
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-            window.set_menu(menu)?;
-        }
-    }
+    app.set_menu(menu)?;
     Ok(())
 }
 

@@ -8,25 +8,106 @@
   <body>
     <div id="app">
       <aside id="sidebar" hidden>
-        <div id="sidebar-tabs" role="tablist">
-          <button id="tab-outline" class="sidebar-tab active" data-i18n="outlineTitle">Outline</button>
-          <button id="tab-files" class="sidebar-tab" data-i18n="filesTitle">Files</button>
+        <div id="side-header">
+          <div id="side-logo" aria-hidden="true">M&#8595;</div>
+          <span id="side-title">MarkRead</span>
         </div>
-        <nav id="outline" aria-label="Table of contents"></nav>
-        <div id="files-pane" hidden>
-          <div id="files-header">
-            <button id="open-folder-btn" class="files-open-btn" data-i18n="openFolder">Open Folder&#8230;</button>
-            <div id="folder-name" hidden></div>
+        <nav id="side-actions" aria-label="Actions">
+          <button type="button" class="side-row" id="act-open">
+            <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span data-i18n="actOpenFile">Open file</span><kbd>Ctrl+O</kbd>
+          </button>
+          <button type="button" class="side-row" id="act-open-folder">
+            <svg viewBox="0 0 24 24"><path d="M6 14l1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v1"/></svg>
+            <span data-i18n="actOpenFolder">Open folder</span><kbd>Ctrl+Alt+O</kbd>
+          </button>
+          <button type="button" class="side-row" id="act-find">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+            <span data-i18n="actFind">Find</span><kbd>Ctrl+F</kbd>
+          </button>
+          <button type="button" class="side-row" id="act-edit">
+            <svg viewBox="0 0 24 24"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+            <span data-i18n="actEdit">Edit</span><kbd>Ctrl+E</kbd>
+          </button>
+          <button type="button" class="side-row" id="act-save">
+            <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span data-i18n="actSave">Save</span><kbd>Ctrl+S</kbd>
+          </button>
+          <button type="button" class="side-row" id="act-print">
+            <svg viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            <span data-i18n="actPrint">Print</span><kbd>Ctrl+P</kbd>
+          </button>
+          <div class="side-row" id="zoom-row">
+            <span data-i18n="actZoom">Zoom</span>
+            <span id="zoom-controls">
+              <button type="button" id="zoom-out-btn" aria-label="Zoom out">&minus;</button>
+              <span id="zoom-label">100%</span>
+              <button type="button" id="zoom-in-btn" aria-label="Zoom in">+</button>
+              <button type="button" id="zoom-reset-btn" aria-label="Reset zoom">&#8634;</button>
+            </span>
           </div>
-          <input
-            id="folder-search"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            hidden
-            data-i18n-placeholder="searchFolderPlaceholder"
-          />
-          <nav id="file-list"></nav>
+        </nav>
+
+        <div class="side-group" id="group-outline">
+          <button type="button" class="group-header" aria-expanded="true">
+            <span data-i18n="outlineTitle">Outline</span>
+            <svg class="chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="group-body">
+            <nav id="outline" aria-label="Table of contents"></nav>
+          </div>
+        </div>
+
+        <div class="side-group" id="group-files" hidden>
+          <button type="button" class="group-header" aria-expanded="true">
+            <span data-i18n="filesTitle">Folder</span>
+            <svg class="chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="group-body">
+            <div id="files-header">
+              <div id="folder-name" hidden></div>
+            </div>
+            <input
+              id="folder-search"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              hidden
+              data-i18n-placeholder="searchFolderPlaceholder"
+            />
+            <nav id="file-list"></nav>
+          </div>
+        </div>
+
+        <div class="side-group" id="group-recents">
+          <button type="button" class="group-header" aria-expanded="true">
+            <span data-i18n="recentFiles">Recent</span>
+            <svg class="chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="group-body">
+            <ul id="recent-list"></ul>
+            <p id="recent-empty" data-i18n="noRecent" hidden>No recent files</p>
+            <button id="clear-recent" class="link-btn" data-i18n="clearRecent" hidden>Clear</button>
+          </div>
+        </div>
+
+        <div id="side-footer">
+          <div id="theme-segment" role="group" aria-label="Theme">
+            <button type="button" data-theme-pref="light" title="Light">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/></svg>
+            </button>
+            <button type="button" data-theme-pref="dark" title="Dark">
+              <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            </button>
+            <button type="button" data-theme-pref="system" title="System">
+              <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </button>
+          </div>
+          <select id="lang-select" aria-label="Language">
+            <option value="en">English</option>
+            <option value="pt-BR">Português (Brasil)</option>
+            <option value="es">Español</option>
+          </select>
         </div>
       </aside>
       <div id="content-wrap">
@@ -57,14 +138,6 @@
             <button id="welcome-open" data-i18n="openFile">Open File&#8230;</button>
             <button id="welcome-folder" class="welcome-secondary" data-i18n="openFolder">Open Folder&#8230;</button>
             <p id="welcome-drop" data-i18n="dropHint">Drop a .md file here, or press Ctrl+O</p>
-            <div id="welcome-recent">
-              <div class="recent-header">
-                <span data-i18n="recentFiles">Recent Files</span>
-                <button id="clear-recent" class="link-btn" data-i18n="clearRecent" hidden>Clear</button>
-              </div>
-              <ul id="recent-list"></ul>
-              <p id="recent-empty" data-i18n="noRecent" hidden>No recent files</p>
-            </div>
           </section>
           <article id="markdown-body" class="markdown-body" hidden></article>
         </div>

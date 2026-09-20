@@ -50,4 +50,11 @@ export const dict: Record<string, string> = {
   statusCursor: "Ln {l}, Col {c}",
   editorToolbarLabel: "Formatação",
   editorSourceLabel: "Código-fonte Markdown",
+  actOpenFile: "Abrir arquivo",
+  actOpenFolder: "Abrir pasta",
+  actFind: "Localizar",
+  actEdit: "Editar",
+  actSave: "Salvar",
+  actPrint: "Imprimir",
+  actZoom: "Zoom",
 };
