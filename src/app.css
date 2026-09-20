@@ -76,6 +76,12 @@ body {
   display: none;
 }
 
+/* Flex children must keep their content height: shrinking them makes the
+   text paint over the next group instead of extending the scrollable area. */
+#sidebar > * {
+  flex-shrink: 0;
+}
+
 #side-header {
   display: flex;
   align-items: center;
