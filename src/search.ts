@@ -6,6 +6,8 @@ export interface SearchController {
   open(): void;
   close(): void;
   isOpen(): boolean;
+  /** Move to the next (1) or previous (-1) match. */
+  step(delta: number): void;
 }
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "MARK", "TEXTAREA", "INPUT"]);
@@ -126,7 +128,7 @@ export function initSearch(
     }
   });
 
-  return { open, close, isOpen };
+  return { open, close, isOpen, step };
 }
 
 /** Search summary for a document — used to clear state when switching files. */

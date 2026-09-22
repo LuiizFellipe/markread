@@ -68,4 +68,10 @@ export const dict: Record<string, string> = {
   showSidebar: "Mostrar barra lateral",
   frontMatterLabel: "Propriedades",
   wikiNotFound: "wiki link \"{name}\" não encontrado",
+  findPrev: "Correspondência anterior (Shift+Enter)",
+  findNext: "Próxima correspondência (Enter)",
+  findClose: "Fechar (Esc)",
+  replacePlaceholder: "Substituir com",
+  replaceBtn: "Substituir",
+  replaceAllBtn: "Substituir tudo",
 };

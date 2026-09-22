@@ -905,8 +905,8 @@ body.resizing {
 
 #findbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 6px 12px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
@@ -916,7 +916,19 @@ body.resizing {
   display: none;
 }
 
-#find-input {
+#find-row,
+#replace-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#replace-row[hidden] {
+  display: none;
+}
+
+#find-input,
+#replace-input {
   flex: 0 1 260px;
   padding: 4px 10px;
   border: 1px solid var(--border);
@@ -927,7 +939,8 @@ body.resizing {
   outline: none;
 }
 
-#find-input:focus {
+#find-input:focus,
+#replace-input:focus {
   border-color: var(--accent);
 }
 
@@ -935,6 +948,22 @@ body.resizing {
   color: var(--muted);
   font-size: 12px;
   min-width: 44px;
+}
+
+.findbar-action {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.findbar-action:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .icon-btn {

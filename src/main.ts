@@ -10,6 +10,7 @@ import darkGithubCss from "github-markdown-css/github-markdown-dark.css?raw";
 import { applyI18n, detectLanguage, setLanguage, t, type Lang } from "./i18n";
 import { enhanceRendered, renderMarkdown } from "./renderer";
 import { initSearch, resetSearch } from "./search";
+import { initEditorSearch } from "./editorSearch";
 import {
   collectHeadings,
   initScrollSpy,
@@ -59,6 +60,10 @@ const outlineEl = $<HTMLElement>("#outline");
 const findbar = $<HTMLElement>("#findbar");
 const findInput = $<HTMLInputElement>("#find-input");
 const findCount = $<HTMLElement>("#find-count");
+const replaceRow = $<HTMLElement>("#replace-row");
+const replaceInput = $<HTMLInputElement>("#replace-input");
+const replaceOneBtn = $<HTMLButtonElement>("#replace-one");
+const replaceAllBtn = $<HTMLButtonElement>("#replace-all");
 const scrollPane = $<HTMLElement>("#scroll-pane");
 const bodyEl = $<HTMLElement>("#markdown-body");
 const editorEl = $<HTMLTextAreaElement>("#editor");
@@ -99,7 +104,25 @@ const updateOpenBtn = $<HTMLButtonElement>("#update-open");
 const updateCloseBtn = $<HTMLButtonElement>("#update-close");
 
 const search = initSearch(bodyEl, findbar, findInput, findCount);
+const editorSearch = initEditorSearch({
+  editor: editorEl,
+  findbar,
+  findInput,
+  countEl: findCount,
+  replaceRow,
+  replaceInput,
+  replaceOneBtn,
+  replaceAllBtn,
+  replaceRange: (start, end, text) => editorReplace(start, end, text),
+});
 const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings, bodyEl);
+
+/** Ctrl+F (and the sidebar/menu Find) route to whichever search makes sense
+ *  for the active mode: rendered page in reading, buffer in editing. */
+function openFind(withReplace = false): void {
+  if (isEditing) editorSearch.open(withReplace);
+  else search.open();
+}
 
 let headings: Heading[] = [];
 let currentFile: FileInfo | null = null;
@@ -798,6 +821,7 @@ function enterEditMode(): void {
 function exitEditMode(): void {
   if (!isEditing || !currentFile) return;
   isEditing = false;
+  editorSearch.close();
   previewGeneration++; // drop in-flight preview renders
   if (previewTimer) {
     clearTimeout(previewTimer);
@@ -992,6 +1016,10 @@ async function openPath(path: string): Promise<FileInfo | null> {
     if (gen !== renderGeneration) return null;
     isEditing = false;
     isDirty = false;
+    // A fresh document starts with a clean find state (the old marks and
+    // counts referred to the previous document's content).
+    editorSearch.close();
+    search.close();
     lastSavedContent = file.content;
     hideEditorArea();
     statusCursor.hidden = true;
@@ -1436,7 +1464,7 @@ async function setupListeners(): Promise<void> {
         printDocument();
         break;
       case "find":
-        if (!bodyEl.hidden) search.open();
+        openFind();
         break;
       case "zoom-in":
         changeZoom(0.1);
@@ -1545,9 +1573,12 @@ function setupKeyboardShortcuts(): void {
     } else if (ev.key === "n") {
       ev.preventDefault();
       void createNewFile();
-    } else if (ev.key === "f" && !bodyEl.hidden) {
+    } else if (ev.key === "f") {
       ev.preventDefault();
-      search.open();
+      openFind();
+    } else if (ev.key === "h" && isEditing) {
+      ev.preventDefault();
+      openFind(true);
     } else if (ev.key === "e" && currentFile) {
       ev.preventDefault();
       if (isEditing) exitEditMode();
@@ -1630,9 +1661,7 @@ async function boot(): Promise<void> {
   $<HTMLButtonElement>("#act-new-file").addEventListener("click", () => void createNewFile());
   $<HTMLButtonElement>("#act-open").addEventListener("click", () => void runOpenDialog());
   $<HTMLButtonElement>("#act-open-folder").addEventListener("click", () => void openFolderDialog());
-  $<HTMLButtonElement>("#act-find").addEventListener("click", () => {
-    if (!bodyEl.hidden) search.open();
-  });
+  $<HTMLButtonElement>("#act-find").addEventListener("click", () => openFind());
   $<HTMLButtonElement>("#act-edit").addEventListener("click", () => {
     if (isEditing) exitEditMode();
     else enterEditMode();
@@ -1717,10 +1746,24 @@ async function boot(): Promise<void> {
     if (shownUpdate) localStorage.setItem(UPDATE_DISMISS_KEY, shownUpdate.latestVersion);
   });
 
+  // Findbar buttons had no handlers before — navigation used to work only
+  // through Enter/Shift+Enter. They follow the active search controller.
+  $<HTMLButtonElement>("#find-prev").addEventListener("click", () =>
+    (isEditing ? editorSearch : search).step(-1),
+  );
+  $<HTMLButtonElement>("#find-next").addEventListener("click", () =>
+    (isEditing ? editorSearch : search).step(1),
+  );
+  $<HTMLButtonElement>("#find-close").addEventListener("click", () => {
+    editorSearch.close();
+    search.close();
+  });
+
   editorEl.addEventListener("input", () => {
     markDirty();
     schedulePreviewUpdate();
     updateStatusCursor();
+    if (editorSearch.isOpen()) editorSearch.refresh();
   });
   editorEl.addEventListener("keydown", (ev) => {
     if (ev.key === "Tab") {

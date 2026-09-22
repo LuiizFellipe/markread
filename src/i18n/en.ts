@@ -68,4 +68,10 @@ export const dict = {
   showSidebar: "Show sidebar",
   frontMatterLabel: "Properties",
   wikiNotFound: "wiki link \"{name}\" not found",
+  findPrev: "Previous match (Shift+Enter)",
+  findNext: "Next match (Enter)",
+  findClose: "Close (Esc)",
+  replacePlaceholder: "Replace with",
+  replaceBtn: "Replace",
+  replaceAllBtn: "Replace all",
 };

@@ -128,17 +128,30 @@
           <button id="update-close" class="icon-btn" aria-label="Dismiss">&#10005;</button>
         </div>
         <div id="findbar" hidden>
-          <input
-            id="find-input"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            data-i18n-placeholder="searchPlaceholder"
-          />
-          <span id="find-count"></span>
-          <button id="find-prev" class="icon-btn" title="Previous match (Shift+Enter)">&#8593;</button>
-          <button id="find-next" class="icon-btn" title="Next match (Enter)">&#8595;</button>
-          <button id="find-close" class="icon-btn" title="Close (Esc)">&#10005;</button>
+          <div id="find-row">
+            <input
+              id="find-input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              data-i18n-placeholder="searchPlaceholder"
+            />
+            <span id="find-count"></span>
+            <button id="find-prev" class="icon-btn" data-i18n-title="findPrev" title="Previous match (Shift+Enter)">&#8593;</button>
+            <button id="find-next" class="icon-btn" data-i18n-title="findNext" title="Next match (Enter)">&#8595;</button>
+            <button id="find-close" class="icon-btn" data-i18n-title="findClose" title="Close (Esc)">&#10005;</button>
+          </div>
+          <div id="replace-row" hidden>
+            <input
+              id="replace-input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              data-i18n-placeholder="replacePlaceholder"
+            />
+            <button id="replace-one" class="findbar-action" data-i18n="replaceBtn">Replace</button>
+            <button id="replace-all" class="findbar-action" data-i18n="replaceAllBtn">Replace all</button>
+          </div>
         </div>
         <div id="scroll-pane">
           <div id="reading-progress" hidden aria-hidden="true"></div>
