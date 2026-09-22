@@ -66,4 +66,6 @@ export const dict: Record<string, string> = {
   newFileUntitled: "sem-titulo.md",
   hideSidebar: "Ocultar barra lateral",
   showSidebar: "Mostrar barra lateral",
+  frontMatterLabel: "Propriedades",
+  wikiNotFound: "wiki link \"{name}\" não encontrado",
 };

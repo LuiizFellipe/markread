@@ -52,6 +52,7 @@ pub fn run() {
             commands::search_markdown_files,
             commands::set_last_folder,
             commands::path_is_dir,
+            commands::resolve_wiki_link,
             commands::set_language,
             commands::take_pending_file,
             updates::check_for_updates

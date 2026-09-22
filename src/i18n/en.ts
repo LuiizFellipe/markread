@@ -66,4 +66,6 @@ export const dict = {
   newFileUntitled: "untitled.md",
   hideSidebar: "Hide sidebar",
   showSidebar: "Show sidebar",
+  frontMatterLabel: "Properties",
+  wikiNotFound: "wiki link \"{name}\" not found",
 };

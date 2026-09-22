@@ -241,13 +241,102 @@ function showDocument(): void {
  *  theme-driven re-renders. */
 async function renderDocument(content: string, dir: string): Promise<void> {
   bodyEl.innerHTML = await renderMarkdown(content);
-  enhanceRendered(bodyEl, dir, {
-    onOpenMarkdownFile: (p) => void openPath(p),
-  });
+  enhanceRendered(bodyEl, dir, documentLinkHandlers);
   hasMermaid = await renderMermaidBlocks(bodyEl);
   headings = collectHeadings(bodyEl);
   renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
   updateScrollSpy();
+}
+
+/** Link behavior shared by the reading view and the editor preview. */
+const documentLinkHandlers = {
+  onOpenMarkdownFile: (path: string) => void openPath(path),
+  onOpenWikiLink: (target: string) => void resolveWikiLink(target),
+};
+
+/* ---------- clickable task checkboxes + wiki links (reading mode) ---------- */
+
+/** All task markers in the source, in document order — the same order the
+ *  renderer used when assigning data-task-index to the checkboxes. */
+const TASK_MARKER_RE = /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/gm;
+
+function toggleTaskMarker(content: string, index: number): string | null {
+  let seen = 0;
+  let found = false;
+  const updated = content.replace(
+    TASK_MARKER_RE,
+    (full: string, head: string, mark: string, tail: string) => {
+      if (seen++ !== index) return full;
+      found = true;
+      return `${head}${mark === " " ? "x" : " "}${tail}`;
+    },
+  );
+  return found ? updated : null;
+}
+
+async function toggleTaskInDocument(index: number): Promise<void> {
+  if (!currentFile || isUntitled || isEditing) return;
+  const updated = toggleTaskMarker(currentFile.content, index);
+  if (updated === null || updated === currentFile.content) return;
+  currentFile.content = updated;
+  // Persist through the regular auto-save path (conflict detection intact),
+  // then re-render so the checkbox reflects the file on disk rather than
+  // the pre-render DOM click.
+  await saveFile({ auto: true });
+  if (!currentFile || isEditing) return;
+  const gen = ++renderGeneration;
+  const snapshot = currentScrollSnapshot();
+  await renderDocument(currentFile.content, currentFile.dir);
+  if (gen !== renderGeneration || isEditing) return;
+  restoreScroll(scrollPane, bodyEl, snapshot);
+  resetSearch(search);
+  updateStatus();
+}
+
+/** `[[Target]]`: try a sibling of the current file first, then the open
+ *  workspace listing. Whatever escapes both is reported, never opened. */
+async function resolveWikiLink(target: string): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) return;
+  if (currentFile?.dir && inTauri) {
+    const resolved = await invoke<string | null>("resolve_wiki_link", {
+      baseDir: currentFile.dir,
+      target: trimmed,
+    }).catch(() => null);
+    if (resolved) {
+      void openPath(resolved);
+      return;
+    }
+  }
+  const inWorkspace = matchWorkspaceFile(trimmed);
+  if (inWorkspace) {
+    void openPath(inWorkspace);
+    return;
+  }
+  statusHint(t("wikiNotFound", { name: trimmed }));
+}
+
+/** RelPath or basename match (case-insensitive, .md optional) against the
+ *  open folder's listing, preferring files next to the current one. */
+function matchWorkspaceFile(target: string): string | null {
+  if (!folderListing) return null;
+  const stripExt = (s: string) => s.replace(/\.(md|markdown|mdown|mkd)$/i, "");
+  const normalized = stripExt(target.replaceAll("\\", "/").toLowerCase());
+  const needleRel = normalized;
+  const needleName = stripExt(splitPath(normalized).name);
+  const currentDir = currentFile ? currentFile.dir.toLowerCase() : "";
+  let first: string | null = null;
+  for (const file of folderListing.files) {
+    const rel = file.relPath.toLowerCase();
+    if (stripExt(rel) !== needleRel && stripExt(splitPath(rel).name) !== needleName) {
+      continue;
+    }
+    first ??= file.path;
+    if (currentDir && file.path.toLowerCase().startsWith(currentDir)) {
+      return file.path;
+    }
+  }
+  return first;
 }
 
 async function showError(err: unknown): Promise<void> {
@@ -346,9 +435,7 @@ async function updateEditorPreview(): Promise<void> {
   // Mermaid is skipped live on purpose: it is heavy and incomplete diagrams
   // would flash parse errors — the full render happens when editing ends.
   editorPreviewEl.innerHTML = html;
-  enhanceRendered(editorPreviewEl, dir, {
-    onOpenMarkdownFile: (p) => void openPath(p),
-  });
+  enhanceRendered(editorPreviewEl, dir, documentLinkHandlers, { disableTasks: true });
 }
 
 /** Replace a range in the editor preserving the native undo stack via
@@ -1612,6 +1699,13 @@ async function boot(): Promise<void> {
   editorToolbar.setAttribute("aria-label", t("editorToolbarLabel"));
   editorEl.setAttribute("aria-label", t("editorSourceLabel"));
   updateCloseBtn.setAttribute("aria-label", t("updateDismiss"));
+  // Task checkboxes toggle their marker in the source file (reading mode).
+  bodyEl.addEventListener("change", (ev) => {
+    const input = ev.target as HTMLInputElement;
+    if (input.type !== "checkbox" || input.disabled) return;
+    const index = Number(input.dataset.taskIndex);
+    if (Number.isInteger(index)) void toggleTaskInDocument(index);
+  });
   clearRecentBtn.addEventListener("click", () => {
     if (inTauri) void invoke("clear_recent_files").then(() => refreshRecents());
   });

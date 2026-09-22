@@ -1177,6 +1177,44 @@ body.dragging-file::after {
   overflow-y: hidden;
 }
 
+/* ---------- YAML front matter ---------- */
+
+.markdown-body .front-matter {
+  margin: 0 0 16px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  font-size: 13px;
+}
+
+.markdown-body .front-matter summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.markdown-body .front-matter table {
+  display: table;
+  width: auto;
+  margin: 8px 0 2px;
+  font-size: 13px;
+}
+
+.markdown-body .front-matter th,
+.markdown-body .front-matter td {
+  border: none;
+  padding: 1px 12px 1px 0;
+  background: transparent;
+}
+
+.markdown-body .front-matter th {
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+}
+
 /* ---------- Print / export PDF ---------- */
 
 @media print {

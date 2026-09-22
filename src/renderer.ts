@@ -45,8 +45,82 @@ function createMarkdownIt(): MarkdownIt {
         .replace(/[^\p{L}\p{N}\s_-]/gu, "")
         .replace(/\s+/g, "-"),
   });
-  instance.use(taskLists, { enabled: false, label: true });
+  // Checkboxes render enabled so reading mode can toggle them in the source
+  // file; the live editor preview disables them again via enhanceRendered.
+  instance.use(taskLists, { enabled: true, label: true });
+  instance.use(wikiLinks);
   return instance;
+}
+
+/* ---------- wiki links ([[Page]] / [[Page|Label]]) ---------- */
+
+/** Inline rule turning `[[Target]]` and `[[Target|Label]]` into an anchor
+ *  with the target in a data attribute. Resolution to a real file happens
+ *  at click time in main.ts, so links survive files moving around. */
+function wikiLinks(md: MarkdownIt): void {
+  md.inline.ruler.before("link", "wikilink", (state, silent) => {
+    const src = state.src;
+    const pos = state.pos;
+    if (src.charCodeAt(pos) !== 0x5b /* [ */ || src.charCodeAt(pos + 1) !== 0x5b) {
+      return false;
+    }
+    const end = src.indexOf("]]", pos + 2);
+    if (end === -1) return false;
+    const inner = src.slice(pos + 2, end);
+    // Reject anything bracket-ish or spanning lines: `[[a]b]]` is text.
+    if (!inner || /[\n[\]]/.test(inner)) return false;
+    const pipe = inner.indexOf("|");
+    const target = (pipe === -1 ? inner : inner.slice(0, pipe)).trim();
+    const label = (pipe === -1 ? inner : inner.slice(pipe + 1)).trim() || target;
+    if (!target) return false;
+    if (!silent) {
+      const open = state.push("wikilink_open", "a", 1);
+      open.attrSet("class", "wiki-link");
+      open.attrSet("data-wiki", target);
+      open.attrSet("href", "#");
+      const text = state.push("text", "", 0);
+      text.content = label;
+      state.push("wikilink_close", "a", -1);
+    }
+    state.pos = end + 2;
+    return true;
+  });
+}
+
+/* ---------- YAML front matter ---------- */
+
+/** Only matches at the very start of the file, where `---` would otherwise
+ *  render as a stray thematic break. */
+const FRONT_MATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+function extractFrontMatter(source: string): { body: string; meta: [string, string][] } {
+  const match = FRONT_MATTER_RE.exec(source);
+  if (!match) return { body: source, meta: [] };
+  const meta: [string, string][] = [];
+  for (const line of match[1].split(/\r?\n/)) {
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key && value) meta.push([key, value]);
+  }
+  // An empty block is more likely a decorative `---` than metadata; leave
+  // the source untouched so it renders as written.
+  if (meta.length === 0) return { body: source, meta: [] };
+  return { body: source.slice(match[0].length), meta };
+}
+
+function frontMatterHtml(meta: [string, string][]): string {
+  const rows = meta
+    .map(
+      ([key, value]) =>
+        `<tr><th>${md.utils.escapeHtml(key)}</th><td>${md.utils.escapeHtml(value)}</td></tr>`,
+    )
+    .join("");
+  return (
+    `<details class="front-matter"><summary>${t("frontMatterLabel")}</summary>` +
+    `<table><tbody>${rows}</tbody></table></details>`
+  );
 }
 
 const md: MarkdownIt = createMarkdownIt();
@@ -66,10 +140,12 @@ function ensureMathRenderer(): Promise<MarkdownIt> {
   return mathRendererPromise;
 }
 
-/** Markdown source → sanitized HTML string. */
+/** Markdown source → sanitized HTML string. A YAML front matter block is
+ *  lifted out and shown as a collapsible properties table on top. */
 export async function renderMarkdown(source: string): Promise<string> {
   const renderer = MATH_HINT.test(source) ? await ensureMathRenderer() : md;
-  const raw = renderer.render(source);
+  const { body, meta } = extractFrontMatter(source);
+  const raw = (meta.length > 0 ? frontMatterHtml(meta) : "") + renderer.render(body);
   return DOMPurify.sanitize(raw, {
     FORBID_TAGS: ["style"],
     ADD_ATTR: ["target", "checked", "disabled", "align"],
@@ -94,6 +170,15 @@ function resolveAgainstBase(href: string, baseDir: string): string | null {
 export interface LinkHandlers {
   /** Called when the user clicks a link that points at another .md file. */
   onOpenMarkdownFile: (path: string) => void;
+  /** Called when the user clicks a `[[wiki link]]`; resolution to a real
+   *  path is the caller's job (workspace listing + base directory). */
+  onOpenWikiLink: (target: string) => void;
+}
+
+export interface EnhanceOptions {
+  /** Editor preview only: task checkboxes stay inert while the source
+   *  buffer is authoritative. */
+  disableTasks?: boolean;
 }
 
 /** execCommand fallback for webviews where the async Clipboard API is not
@@ -154,13 +239,23 @@ function addCopyButtons(container: HTMLElement): void {
 }
 
 /** Post-process the rendered DOM: local images via the asset protocol,
- *  external links via the OS browser, .md links navigated in-app. */
+ *  external links via the OS browser, .md links navigated in-app, task
+ *  checkboxes indexed for source toggling, wiki links wired up. */
 export function enhanceRendered(
   container: HTMLElement,
   baseDir: string,
   handlers: LinkHandlers,
+  options: EnhanceOptions = {},
 ): void {
   addCopyButtons(container);
+
+  // Document order == order of task markers in the source, which is what
+  // makes the index-based toggle in main.ts map back to the right line.
+  container.querySelectorAll('input[type="checkbox"]').forEach((checkbox, index) => {
+    const input = checkbox as HTMLInputElement;
+    input.dataset.taskIndex = String(index);
+    if (options.disableTasks) input.disabled = true;
+  });
 
   container.querySelectorAll("img").forEach((img) => {
     const src = img.getAttribute("src") ?? "";
@@ -172,6 +267,13 @@ export function enhanceRendered(
         once: true,
       });
     }
+  });
+
+  container.querySelectorAll("a.wiki-link[data-wiki]").forEach((a) => {
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      handlers.onOpenWikiLink((a as HTMLElement).dataset.wiki ?? "");
+    });
   });
 
   container.querySelectorAll("a[href]").forEach((a) => {

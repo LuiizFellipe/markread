@@ -498,9 +498,39 @@ pub fn path_is_dir(path: String) -> bool {
     Path::new(&path).is_dir()
 }
 
+/// Resolve a `[[wiki link]]` target against `base_dir`, refusing anything
+/// that escapes it. Targets without a markdown extension get `.md`
+/// appended; the returned path is absolute and canonical.
+#[tauri::command]
+pub fn resolve_wiki_link(base_dir: String, target: String) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let base = PathBuf::from(&base_dir);
+    let candidate = if has_markdown_ext(Path::new(target)) {
+        base.join(target)
+    } else {
+        base.join(format!("{target}.md"))
+    };
+    // Canonicalize resolves `..`, symlinks and letter case; the result must
+    // stay inside the base directory (blocks `[[../../anything]]`).
+    let canonical_base = base.canonicalize().ok()?;
+    let canonical = candidate.canonicalize().ok()?;
+    if !canonical.starts_with(&canonical_base) || !canonical.is_file() {
+        return None;
+    }
+    // Windows canonical paths carry a `\\?\` prefix no other command
+    // produces; strip it so paths round-trip through recents/highlight.
+    let text = canonical.to_string_lossy();
+    Some(text.strip_prefix(r"\\?\").unwrap_or(&text).to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::search_snippet;
+    use super::{resolve_wiki_link, search_snippet};
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn snippet_survives_chars_whose_lowercase_expands() {
@@ -515,5 +545,41 @@ mod tests {
     #[test]
     fn snippet_short_lines_pass_through() {
         assert_eq!(search_snippet("short match here", "match"), "short match here");
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "markread-test-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn wiki_link_resolves_sibling_without_extension() {
+        let dir = temp_dir("wiki-sibling");
+        fs::write(dir.join("note.md"), "x").unwrap();
+        let resolved = resolve_wiki_link(dir.to_string_lossy().into_owned(), "note".into());
+        assert!(resolved.is_some());
+        // Windows canonical paths must not leak the `\\?\` prefix.
+        assert!(!resolved.unwrap().starts_with(r"\\?\"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wiki_link_traversal_outside_base_is_refused() {
+        let base = temp_dir("wiki-base");
+        let outside = temp_dir("wiki-outside");
+        fs::write(outside.join("secret.md"), "x").unwrap();
+        let dir_name = outside.file_name().unwrap().to_string_lossy().into_owned();
+        let resolved = resolve_wiki_link(
+            base.to_string_lossy().into_owned(),
+            format!("../{dir_name}/secret"),
+        );
+        assert!(resolved.is_none());
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
     }
 }
