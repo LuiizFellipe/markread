@@ -576,6 +576,16 @@ pub fn set_last_folder(app: AppHandle, path: Option<String>) {
     });
 }
 
+/// Persist the open-tab session (named file paths + which was active) so
+/// the next launch restores the workspace. Debounced by the frontend.
+#[tauri::command]
+pub fn set_session(app: AppHandle, open_tabs: Vec<String>, active_tab: usize) {
+    settings::update(&app, |app_settings| {
+        app_settings.open_tabs = open_tabs;
+        app_settings.active_tab = active_tab;
+    });
+}
+
 #[tauri::command]
 pub fn path_is_dir(path: String) -> bool {
     Path::new(&path).is_dir()

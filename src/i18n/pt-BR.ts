@@ -77,4 +77,5 @@ export const dict: Record<string, string> = {
   pasteImageNeedsSave: "Salve o arquivo antes de colar imagens",
   pasteImageFailed: "não foi possível salvar a imagem colada",
   pasteImageTooLarge: "imagem grande demais para colar",
+  closeTab: "Fechar aba",
 };

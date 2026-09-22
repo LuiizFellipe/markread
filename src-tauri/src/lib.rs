@@ -54,6 +54,7 @@ pub fn run() {
             commands::list_markdown_files,
             commands::search_markdown_files,
             commands::set_last_folder,
+            commands::set_session,
             commands::path_is_dir,
             commands::resolve_wiki_link,
             commands::set_language,

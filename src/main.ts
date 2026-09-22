@@ -26,6 +26,7 @@ import {
   type ScrollSnapshot,
 } from "./scroll";
 import { attachDragResize } from "./resizer";
+import { initTabbar, type FileInfo, type Tab } from "./tabs";
 
 /* Scope the dark GitHub stylesheet under html[data-theme="dark"] so the manual
    theme toggle (not prefers-color-scheme) decides which palette applies. */
@@ -40,14 +41,6 @@ import { attachDragResize } from "./resizer";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 const isMac = /mac/i.test(navigator.platform);
-
-interface FileInfo {
-  path: string;
-  name: string;
-  dir: string;
-  content: string;
-  size: number;
-}
 
 const $ = <T extends HTMLElement>(selector: string): T => {
   const el = document.querySelector<T>(selector);
@@ -171,6 +164,70 @@ let workspaceDir: string | null = null;
 let folderListing: FolderListing | null = null;
 let folderSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let folderSearchSeq = 0;
+
+/* ---------- tabs state ---------- */
+
+const tabbarRow = $<HTMLElement>("#tabbar-row");
+const tabbarEl = $<HTMLElement>("#tabbar");
+const tabNewBtn = $<HTMLButtonElement>("#tab-new");
+
+const tabbar = initTabbar(tabbarEl, tabNewBtn, {
+  onActivate: (id) => void activateTab(id),
+  onClose: (id) => void closeTab(id),
+  onNew: () => void createNewFile(),
+});
+
+let tabs: Tab[] = [];
+let activeTabId: number | null = null;
+let nextTabId = 1;
+
+function getActiveTab(): Tab | null {
+  if (activeTabId === null) return null;
+  return tabs.find((tab) => tab.id === activeTabId) ?? null;
+}
+
+/** Mirror the live document state into the active tab (after a save, a
+ *  reload, or any change the tab's cached fields must reflect). */
+function syncActiveTab(): void {
+  const tab = getActiveTab();
+  if (!tab) return;
+  tab.file = currentFile ?? tab.file;
+  tab.untitled = isUntitled;
+  tab.dirty = isDirty;
+  tab.lastSavedContent = lastSavedContent;
+  tab.fileUsesCrlf = fileUsesCrlf;
+  tab.editSeq = editSeq;
+}
+
+function createTabForFile(file: FileInfo): Tab {
+  return {
+    id: nextTabId++,
+    file,
+    untitled: false,
+    dirty: false,
+    editing: false,
+    buffer: null,
+    lastSavedContent: file.content,
+    fileUsesCrlf: file.content.includes("\r\n"),
+    editSeq: 0,
+    scroll: null,
+    editorScrollTop: 0,
+    previewScrollTop: 0,
+  };
+}
+
+function renderTabbar(): void {
+  tabbarRow.hidden = tabs.length === 0;
+  tabbar.render(
+    tabs.map((tab) => ({
+      id: tab.id,
+      name: tab.untitled ? t("statusUntitled") : tab.file.name,
+      path: tab.file.path,
+      dirty: tab.dirty,
+    })),
+    activeTabId,
+  );
+}
 
 /* ---------- zoom ---------- */
 
@@ -385,6 +442,8 @@ function markDirty(): void {
   editSeq++;
   if (!isDirty) {
     isDirty = true;
+    syncActiveTab(); // the tab strip renders from the tab, not the globals
+    renderTabbar();
     updateWindowTitle();
   }
   scheduleAutosave();
@@ -789,6 +848,7 @@ async function reloadCurrentFile(): Promise<void> {
   const snapshot = currentScrollSnapshot();
   fileUsesCrlf = file.content.includes("\r\n");
   currentFile = file;
+  syncActiveTab();
   await renderDocument(file.content, file.dir);
   if (gen !== renderGeneration) return;
   restoreScroll(scrollPane, bodyEl, snapshot);
@@ -951,16 +1011,6 @@ function setSaveIndicator(state: "saving" | "saved" | "error" | "idle"): void {
   }
 }
 
-/** Leave the current document safely: flush a pending auto-save, then fall
- *  back to the discard prompt for whatever is still unsaved (an untitled
- *  buffer gets a save dialog instead). False = the user cancelled. */
-async function guardDocumentSwitch(): Promise<boolean> {
-  cancelAutosave();
-  if (isDirty && currentFile && !isUntitled) await saveFile({ auto: true });
-  if (!isDirty) return true;
-  return confirmDiscardChanges();
-}
-
 async function saveFile(opts: { auto?: boolean } = {}): Promise<void> {
   if (!currentFile) return;
   if (isUntitled) {
@@ -999,6 +1049,8 @@ async function saveFile(opts: { auto?: boolean } = {}): Promise<void> {
     isDirty = seq !== editSeq;
     lastSavedContent = file.content;
     setSaveIndicator("saved");
+    syncActiveTab();
+    renderTabbar();
     updateWindowTitle();
     updateStatus();
   } catch (err) {
@@ -1044,6 +1096,9 @@ async function saveFileAs(): Promise<boolean> {
     isDirty = seq !== editSeq;
     lastSavedContent = file.content;
     setSaveIndicator("saved");
+    syncActiveTab();
+    renderTabbar();
+    persistSession();
     updateWindowTitle();
     updateStatus();
     updateGroupVisibility();
@@ -1066,60 +1121,232 @@ async function saveFileAs(): Promise<boolean> {
 }
 
 async function openPath(path: string): Promise<FileInfo | null> {
-  if (!(await guardDocumentSwitch())) return null;
-  const gen = ++renderGeneration;
-  await saveReadingPositionNow();
-  if (gen !== renderGeneration) return null;
+  // An already-open document comes to front instead of duplicating.
+  const key = path.toLowerCase();
+  const existing = tabs.find(
+    (tab) => !tab.untitled && tab.file.path.toLowerCase() === key,
+  );
+  if (existing) {
+    await activateTab(existing.id);
+    return existing.file;
+  }
+  let file: FileInfo;
   try {
-    const savedPosition: Promise<ReadingPosition | null> = inTauri
-      ? invoke<ReadingPosition | null>("get_reading_position", { path }).catch(() => null)
-      : Promise.resolve(null);
-    const [file, saved] = await Promise.all([
-      invoke<FileInfo>("read_markdown_file", { path }),
-      savedPosition,
-    ]);
-    if (gen !== renderGeneration) return null;
-    isEditing = false;
-    isDirty = false;
-    // A fresh document starts with a clean find state (the old marks and
-    // counts referred to the previous document's content).
-    editorSearch.close();
-    search.close();
-    lastSavedContent = file.content;
-    hideEditorArea();
-    statusCursor.hidden = true;
-    editorEl.value = "";
-    fileUsesCrlf = file.content.includes("\r\n");
-    currentFile = file;
-    updateGroupVisibility();
-    await renderDocument(file.content, file.dir);
-    if (gen !== renderGeneration) return null;
-    showDocument();
-    updateStatus();
-    restoreScroll(scrollPane, bodyEl, {
-      top: saved?.scrollTop ?? 0,
-      height: saved?.scrollHeight ?? 0,
-      anchorId: saved?.anchorId ?? null,
-      anchorOffset: saved?.anchorOffset ?? 0,
-    });
-    updateReadingProgress();
-    if (inTauri) {
-      await getCurrentWindow().setTitle(`${file.name} — MarkRead`);
-      if (gen !== renderGeneration) return null;
-      await invoke("push_recent_file", { path });
-      void refreshRecents();
-      highlightActiveFile();
-      try {
-        await invoke("watch_file", { path });
-      } catch {
-        /* auto-reload unavailable for this path — reading still works */
-      }
-    }
-    return file;
+    file = await invoke<FileInfo>("read_markdown_file", { path });
   } catch (err) {
-    if (gen === renderGeneration) await showError(err);
+    await showError(err);
     return null;
   }
+  const tab = createTabForFile(file);
+  tabs.push(tab);
+  renderTabbar();
+  await activateTab(tab.id);
+  if (inTauri) {
+    try {
+      await invoke("push_recent_file", { path });
+    } catch {
+      /* recents are best-effort */
+    }
+    void refreshRecents();
+  }
+  persistSession();
+  return file;
+}
+
+/* ---------- tabs (activate / close / session) ---------- */
+
+/** Copy the active document's live state into its tab so another tab can
+ *  take over the shared UI. Must run before the active pointer moves. */
+function stashActiveTab(): void {
+  const tab = getActiveTab();
+  if (!tab) return;
+  syncActiveTab();
+  tab.editing = isEditing;
+  tab.buffer = isEditing ? editorEl.value : null;
+  if (isEditing) {
+    tab.editorScrollTop = editorEl.scrollTop;
+    tab.previewScrollTop = editorPreviewScroll.scrollTop;
+    tab.scroll = null;
+  } else if (!bodyEl.hidden) {
+    tab.scroll = currentScrollSnapshot();
+  }
+}
+
+async function activateTab(id: number): Promise<void> {
+  if (id === activeTabId) return;
+  const target = tabs.find((tab) => tab.id === id);
+  if (!target) return;
+  // Outgoing tab: flush its save + persist the reading position first —
+  // both run against the shared globals while they still hold this tab.
+  cancelAutosave();
+  if (isDirty && currentFile && !isUntitled) await saveFile({ auto: true });
+  if (currentFile && !isUntitled && !isEditing && !bodyEl.hidden) {
+    await saveReadingPositionNow();
+  }
+  stashActiveTab();
+  activeTabId = id;
+  renderTabbar();
+  persistSession();
+  // Find state is per document: marks/counts from the previous document
+  // would be stale in the new one.
+  editorSearch.close();
+  search.close();
+
+  const gen = ++renderGeneration;
+  currentFile = target.file;
+  isUntitled = target.untitled;
+  isDirty = target.dirty;
+  isEditing = target.editing;
+  lastSavedContent = target.lastSavedContent;
+  fileUsesCrlf = target.fileUsesCrlf;
+  editSeq = target.editSeq;
+  editorEl.value = target.buffer ?? "";
+  statusCursor.hidden = true;
+  updateGroupVisibility();
+  if (target.editing) {
+    welcome.hidden = true;
+    bodyEl.hidden = true;
+    showEditorArea();
+    backToTop.classList.remove("visible");
+    void updateEditorPreview();
+    editorEl.scrollTop = target.editorScrollTop;
+    editorPreviewScroll.scrollTop = target.previewScrollTop;
+    editorEl.focus();
+    updateStatus();
+    updateStatusCursor();
+  } else {
+    let saved: ReadingPosition | null = null;
+    if (!target.scroll && !isUntitled && inTauri) {
+      saved = await invoke<ReadingPosition | null>("get_reading_position", {
+        path: currentFile.path,
+      }).catch(() => null);
+    }
+    if (gen !== renderGeneration || activeTabId !== id) return;
+    hideEditorArea();
+    await renderDocument(currentFile.content, currentFile.dir);
+    if (gen !== renderGeneration || activeTabId !== id) return;
+    showDocument();
+    if (target.scroll) {
+      restoreScroll(scrollPane, bodyEl, target.scroll);
+    } else {
+      restoreScroll(scrollPane, bodyEl, {
+        top: saved?.scrollTop ?? 0,
+        height: saved?.scrollHeight ?? 0,
+        anchorId: saved?.anchorId ?? null,
+        anchorOffset: saved?.anchorOffset ?? 0,
+      });
+    }
+    updateReadingProgress();
+    if (inTauri && !isUntitled && currentFile.path) {
+      void invoke("watch_file", { path: currentFile.path }).catch(() => {});
+    }
+    updateStatus();
+    // A clean reading tab silently catches up with disk changes that
+    // happened while it was in the background (reloadCurrentFile no-ops
+    // when the content already matches).
+    if (!isDirty && !isUntitled && inTauri) void reloadCurrentFile();
+  }
+  updateWindowTitle();
+  highlightActiveFile();
+}
+
+async function closeTab(id: number): Promise<void> {
+  const index = tabs.findIndex((tab) => tab.id === id);
+  if (index === -1) return;
+  // The discard prompt works on the active document, so a dirty background
+  // tab is activated first.
+  if (id !== activeTabId && tabs[index].dirty) await activateTab(id);
+  if (id === activeTabId && isDirty) {
+    if (!(await confirmDiscardChanges())) return;
+    // Discarded: clear the flag or the outgoing flush on the next
+    // activation would silently re-save the rejected content.
+    isDirty = false;
+  }
+  const currentIndex = tabs.findIndex((tab) => tab.id === id);
+  tabs.splice(currentIndex, 1);
+  if (id === activeTabId) {
+    const next = tabs[currentIndex] ?? tabs[currentIndex - 1] ?? null;
+    if (next) {
+      await activateTab(next.id);
+    } else {
+      closeLastTab();
+    }
+  }
+  renderTabbar();
+  persistSession();
+}
+
+/** All tabs gone: back to the welcome screen. */
+function closeLastTab(): void {
+  activeTabId = null;
+  currentFile = null;
+  isEditing = false;
+  isDirty = false;
+  isUntitled = false;
+  renderGeneration++;
+  editorSearch.close();
+  search.close();
+  hideEditorArea();
+  statusCursor.hidden = true;
+  welcome.hidden = false;
+  bodyEl.hidden = true;
+  progressEl.hidden = true;
+  backToTop.classList.remove("visible");
+  updateStatus();
+  updateGroupVisibility();
+  if (inTauri) void getCurrentWindow().setTitle("MarkRead").catch(() => {});
+}
+
+function cycleTab(delta: number): void {
+  if (tabs.length < 2 || activeTabId === null) return;
+  const index = tabs.findIndex((tab) => tab.id === activeTabId);
+  const next = tabs[(index + delta + tabs.length) % tabs.length];
+  void activateTab(next.id);
+}
+
+let sessionTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Persist the open (named) tabs + active index for the next launch. */
+function persistSession(): void {
+  if (!inTauri) return;
+  if (sessionTimer) clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => {
+    const paths = tabs.filter((tab) => !tab.untitled).map((tab) => tab.file.path);
+    const index = tabs.findIndex((tab) => tab.id === activeTabId);
+    void invoke("set_session", {
+      openTabs: paths,
+      activeTab: index === -1 ? 0 : index,
+    }).catch(() => {});
+  }, 300);
+}
+
+async function restoreSession(paths: string[], activeIndex: number): Promise<void> {
+  for (const path of paths.slice(0, 20)) {
+    try {
+      const file = await invoke<FileInfo>("read_markdown_file", { path });
+      tabs.push(createTabForFile(file));
+    } catch {
+      /* gone since last session — skip */
+    }
+  }
+  if (tabs.length === 0) return;
+  renderTabbar();
+  const index = Math.min(Math.max(activeIndex, 0), tabs.length - 1);
+  await activateTab(tabs[index].id);
+}
+
+/** Window close: flush every document's auto-save, then prompt only for
+ *  what is still unsaved (untitled buffers get the save dialog). */
+async function confirmCloseAllTabs(): Promise<boolean> {
+  if (isDirty && currentFile && !isUntitled) await saveFile({ auto: true });
+  for (const tab of [...tabs]) {
+    if (!tab.dirty) continue;
+    if (tab.id !== activeTabId) await activateTab(tab.id);
+    if (isDirty && !isUntitled) await saveFile({ auto: true });
+    if (!isDirty) continue;
+    if (!(await confirmDiscardChanges())) return false;
+  }
+  return true;
 }
 
 /* ---------- recent files ---------- */
@@ -1287,25 +1514,33 @@ function joinPath(dir: string, name: string): string {
   return `${trimmed}${sep}${name}`;
 }
 
-/** New file: an in-memory untitled buffer the user can type into right away.
+/** New file: an in-memory untitled tab the user can type into right away.
  *  Nothing touches the disk until the buffer is saved explicitly (Ctrl+S →
  *  save dialog), so "New file" never opens a dialog first. */
 async function createNewFile(): Promise<void> {
-  if (!(await guardDocumentSwitch())) return;
-  renderGeneration++; // drop in-flight renders for the previous document
-  isUntitled = true;
-  isDirty = false;
-  editSeq = 0;
-  fileUsesCrlf = false;
-  currentFile = {
-    path: "",
-    name: t("statusUntitled"),
-    dir: workspaceDir ?? currentFile?.dir ?? "",
-    content: "",
-    size: 0,
+  const tab: Tab = {
+    id: nextTabId++,
+    file: {
+      path: "",
+      name: t("statusUntitled"),
+      dir: workspaceDir ?? currentFile?.dir ?? "",
+      content: "",
+      size: 0,
+    },
+    untitled: true,
+    dirty: false,
+    editing: true,
+    buffer: "",
+    lastSavedContent: null,
+    fileUsesCrlf: false,
+    editSeq: 0,
+    scroll: null,
+    editorScrollTop: 0,
+    previewScrollTop: 0,
   };
-  enterEditMode();
-  updateGroupVisibility();
+  tabs.push(tab);
+  renderTabbar();
+  await activateTab(tab.id);
   updateWindowTitle();
 }
 
@@ -1605,6 +1840,7 @@ async function setupListeners(): Promise<void> {
     updateStatus();
     updateWindowTitle();
     updateStatusCursor();
+    renderTabbar();
     renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
     backToTop.title = t("backToTop");
     backToTop.setAttribute("aria-label", t("backToTop"));
@@ -1625,7 +1861,7 @@ async function setupListeners(): Promise<void> {
       event.preventDefault();
       try {
         await saveReadingPositionNow();
-        if (!(await guardDocumentSwitch())) return;
+        if (!(await confirmCloseAllTabs())) return;
         isDirty = false;
       } catch {
         // A failed save or dialog must never leave the window uncloseable.
@@ -1692,6 +1928,18 @@ function setupKeyboardShortcuts(): void {
       // (persists the reading position, honors the dirty guard).
       ev.preventDefault();
       void getCurrentWindow().close().catch(() => {});
+    } else if (ev.key === "w" && inTauri && activeTabId !== null) {
+      ev.preventDefault();
+      void closeTab(activeTabId);
+    } else if (ev.key === "Tab" && inTauri) {
+      ev.preventDefault();
+      cycleTab(ev.shiftKey ? -1 : 1);
+    } else if (ev.key === "PageDown" && inTauri) {
+      ev.preventDefault();
+      cycleTab(1);
+    } else if (ev.key === "PageUp" && inTauri) {
+      ev.preventDefault();
+      cycleTab(-1);
     } else if (ev.key === "O" && ev.shiftKey) {
       ev.preventDefault();
       toggleSidebar();
@@ -1724,18 +1972,24 @@ async function boot(): Promise<void> {
   let language = detectLanguage();
   let lastFolder: string | null = null;
   let checkUpdatesOnStartup = false;
+  let sessionTabs: string[] = [];
+  let sessionActive = 0;
   if (inTauri) {
     try {
       const settings = await invoke<{
         language: string;
         lastFolder: string | null;
         checkUpdatesOnStartup: boolean;
+        openTabs?: string[];
+        activeTab?: number;
       }>("get_settings");
       if (["en", "pt-BR", "es"].includes(settings.language)) {
         language = settings.language as Lang;
       }
       lastFolder = settings.lastFolder;
       checkUpdatesOnStartup = settings.checkUpdatesOnStartup;
+      sessionTabs = settings.openTabs ?? [];
+      sessionActive = settings.activeTab ?? 0;
     } catch {
       /* fall back to detected locale */
     }
@@ -1951,13 +2205,14 @@ async function boot(): Promise<void> {
   await applyZoom();
 
   if (inTauri) {
+    if (lastFolder) await openFolder(lastFolder, { quiet: true });
+    await restoreSession(sessionTabs, sessionActive);
     try {
       const pending = await invoke<string | null>("take_pending_file");
       if (pending) await openPath(pending);
     } catch (err) {
       console.error(err);
     }
-    if (lastFolder) await openFolder(lastFolder, { quiet: true });
     if (checkUpdatesOnStartup) void runUpdateCheck(false);
   }
 }

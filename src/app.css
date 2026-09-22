@@ -711,6 +711,107 @@ body.resizing {
   background: var(--accent-soft);
 }
 
+/* ---------- Tabs (multi-document strip) ---------- */
+
+#tabbar-row {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+#tabbar-row[hidden] {
+  display: none;
+}
+
+#tabbar {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 200px;
+  height: 32px;
+  padding: 0 6px 0 12px;
+  border-right: 1px solid var(--border);
+  border-top: 2px solid transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tab:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.tab.active {
+  background: var(--bg);
+  border-top-color: var(--accent);
+  color: var(--fg);
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-dirty {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tab-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tab-close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+#tab-new {
+  flex: 0 0 auto;
+  width: 30px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+#tab-new:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
 /* ---------- Editor (toolbar + split source/preview) ---------- */
 
 #editor-area {
@@ -1256,6 +1357,7 @@ body.dragging-file::after {
   #side-float-open,
   #statusbar,
   #findbar,
+  #tabbar-row,
   #update-banner,
   #editor-area,
   #welcome,

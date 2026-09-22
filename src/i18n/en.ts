@@ -77,4 +77,5 @@ export const dict = {
   pasteImageNeedsSave: "Save the file before pasting images",
   pasteImageFailed: "could not save pasted image",
   pasteImageTooLarge: "image too large to paste",
+  closeTab: "Close tab",
 };

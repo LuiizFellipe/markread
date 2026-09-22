@@ -25,6 +25,10 @@ pub struct Settings {
     pub reading_positions: Vec<ReadingEntry>,
     pub last_folder: Option<String>,
     pub check_updates_on_startup: bool,
+    /// Open markdown file paths restored as tabs on the next launch.
+    pub open_tabs: Vec<String>,
+    /// Index into `open_tabs` of the tab that was active.
+    pub active_tab: usize,
 }
 
 impl Default for Settings {
@@ -35,6 +39,8 @@ impl Default for Settings {
             reading_positions: Vec::new(),
             last_folder: None,
             check_updates_on_startup: true,
+            open_tabs: Vec::new(),
+            active_tab: 0,
         }
     }
 }
