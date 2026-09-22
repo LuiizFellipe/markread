@@ -3,7 +3,7 @@ mod menu;
 mod settings;
 mod updates;
 
-use commands::{FileWatcher, PendingFile};
+use commands::{FileWatcher, FolderWatcher, PendingFile};
 use tauri::Manager;
 
 pub fn run() {
@@ -23,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(PendingFile(Default::default()))
         .manage(FileWatcher(Default::default()))
+        .manage(FolderWatcher(Default::default()))
         .setup(|app| {
             let handle = app.handle().clone();
             menu::refresh(&handle)?;
@@ -48,6 +49,8 @@ pub fn run() {
             commands::get_reading_position,
             commands::set_reading_position,
             commands::watch_file,
+            commands::watch_folder,
+            commands::save_clipboard_image,
             commands::list_markdown_files,
             commands::search_markdown_files,
             commands::set_last_folder,

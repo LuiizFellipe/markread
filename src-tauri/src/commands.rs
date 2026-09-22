@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::fs;
@@ -16,6 +17,9 @@ pub struct PendingFile(pub Mutex<Option<String>>);
 /// Watching the parent directory (not the file handle) keeps the watch alive
 /// across editors that save via write-temp-then-rename (VS Code, others).
 pub struct FileWatcher(pub Mutex<Option<RecommendedWatcher>>);
+
+/// Active watcher for the open workspace folder; replaced per folder.
+pub struct FolderWatcher(pub Mutex<Option<RecommendedWatcher>>);
 
 fn paths_match(a: &Path, b: &Path) -> bool {
     if a == b {
@@ -61,6 +65,85 @@ pub fn watch_file(
         .map_err(|e| e.to_string())?;
     *watcher.0.lock().unwrap() = Some(fs_watcher);
     Ok(())
+}
+
+/// Watch `dir` recursively and emit `folder-changed` when the workspace
+/// listing may be stale (files or folders created, renamed, removed, or
+/// written). The frontend debounces and re-lists.
+#[tauri::command]
+pub fn watch_folder(
+    app: AppHandle,
+    watcher: State<'_, FolderWatcher>,
+    dir: String,
+) -> Result<(), String> {
+    let root = PathBuf::from(&dir);
+    if !root.is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let mut fs_watcher = notify::recommended_watcher({
+        let app = app.clone();
+        move |result: Result<Event, notify::Error>| {
+            let Ok(event) = result else { return };
+            // Plain access events carry no listing-relevant change.
+            if matches!(event.kind, notify::EventKind::Access(_)) {
+                return;
+            }
+            let _ = app.emit_to("main", "folder-changed", ());
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    fs_watcher
+        .watch(&root, RecursiveMode::Recursive)
+        .map_err(|e| e.to_string())?;
+    *watcher.0.lock().unwrap() = Some(fs_watcher);
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedImage {
+    pub path: String,
+    pub name: String,
+}
+
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Persist a pasted clipboard image next to the document. Bytes arrive as
+/// base64 (the IPC is JSON), the name is generated server-side
+/// (`pasted-image`, `-2`, `-3`… on collision) and the extension is
+/// whitelisted, so the frontend never crafts a path.
+#[tauri::command]
+pub fn save_clipboard_image(dir: String, data: String, ext: String) -> Result<SavedImage, String> {
+    let ext = ext.to_ascii_lowercase();
+    if !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("unsupported image format: {ext}"));
+    }
+    let base = PathBuf::from(&dir);
+    if !base.is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| e.to_string())?;
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return Err(format!("image size out of range: {} bytes", bytes.len()));
+    }
+    let mut candidate = base.join(format!("pasted-image.{ext}"));
+    let mut n = 1;
+    while candidate.exists() {
+        n += 1;
+        candidate = base.join(format!("pasted-image-{n}.{ext}"));
+    }
+    fs::write(&candidate, bytes).map_err(|e| e.to_string())?;
+    let name = candidate
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(SavedImage {
+        path: candidate.to_string_lossy().into_owned(),
+        name,
+    })
 }
 
 #[derive(Serialize)]

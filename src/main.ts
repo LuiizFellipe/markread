@@ -802,6 +802,71 @@ function handleFileChanged(path: string): void {
   reloadTimer = setTimeout(() => void reloadCurrentFile(), RELOAD_DEBOUNCE);
 }
 
+/* ---------- paste images from the clipboard ---------- */
+
+const MAX_PASTE_IMAGE_BYTES = 20 * 1024 * 1024;
+
+interface SavedImage {
+  path: string;
+  name: string;
+}
+
+/** Path of the saved image relative to the document folder, so the markdown
+ *  link keeps working when the folder moves. */
+function relativeImagePath(dir: string, filePath: string): string {
+  const base = dir.replaceAll("\\", "/").replace(/\/+$/, "") + "/";
+  const full = filePath.replaceAll("\\", "/");
+  return full.startsWith(base) ? full.slice(base.length) : full;
+}
+
+function insertAtCursor(text: string): void {
+  const start = editorEl.selectionStart;
+  const end = editorEl.selectionEnd;
+  editorReplace(start, end, text, start + text.length);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let at = 0; at < bytes.length; at += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + chunk));
+  }
+  return btoa(binary);
+}
+
+/** Save every clipboard image next to the document and insert the markdown
+ *  link at the caret. The untitled buffer has no folder yet, so it asks to
+ *  be saved first instead of guessing a location. */
+async function pasteImages(files: File[]): Promise<void> {
+  if (!currentFile) return;
+  if (isUntitled) {
+    statusHint(t("pasteImageNeedsSave"));
+    return;
+  }
+  const dir = currentFile.dir;
+  for (const file of files) {
+    const ext = (file.type.split("/")[1] ?? "png").toLowerCase();
+    if (file.size > MAX_PASTE_IMAGE_BYTES) {
+      statusHint(t("pasteImageTooLarge"));
+      continue;
+    }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const saved = await invoke<SavedImage>("save_clipboard_image", {
+        dir,
+        data: bytesToBase64(bytes),
+        ext,
+      });
+      const rel = relativeImagePath(dir, saved.path);
+      const alt = saved.name.replace(/\.[^.]+$/, "");
+      const target = /[\s()]/.test(rel) ? `<${rel}>` : rel;
+      insertAtCursor(`![${alt}](${target})\n`);
+    } catch {
+      statusHint(t("pasteImageFailed"));
+    }
+  }
+}
+
 function enterEditMode(): void {
   if (!currentFile) return;
   renderGeneration++; // cancel any in-flight document render
@@ -1267,6 +1332,11 @@ async function openFolder(
     folderSearchInput.hidden = false;
     folderSearchInput.value = "";
     renderFileList(listing);
+    // Live listing only for watchable trees; truncated ones (huge) skip the
+    // recursive watcher instead of ballooning OS handles.
+    if (inTauri && !listing.truncated) {
+      void invoke("watch_folder", { dir: listing.dir }).catch(() => {});
+    }
     if (inTauri) void invoke("set_last_folder", { path: listing.dir }).catch(() => {});
     updateGroupVisibility();
     if (reveal) revealSidebar();
@@ -1370,6 +1440,33 @@ function runFolderSearch(): void {
     .catch(() => {});
 }
 
+/* ---------- live folder listing ---------- */
+
+const FOLDER_REFRESH_DEBOUNCE = 400;
+let folderReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+function handleFolderChanged(): void {
+  if (!workspaceDir) return;
+  if (folderReloadTimer) clearTimeout(folderReloadTimer);
+  folderReloadTimer = setTimeout(() => void refreshFolderListing(), FOLDER_REFRESH_DEBOUNCE);
+}
+
+/** Re-scan the workspace and refresh whatever the sidebar shows, keeping
+ *  the active-file highlight. A vanished folder keeps the stale listing;
+ *  the next explicit open reports the error. */
+async function refreshFolderListing(): Promise<void> {
+  if (!workspaceDir) return;
+  let listing: FolderListing;
+  try {
+    listing = await invoke<FolderListing>("list_markdown_files", { dir: workspaceDir });
+  } catch {
+    return;
+  }
+  folderListing = listing;
+  if (folderSearchInput.value.trim()) runFolderSearch();
+  else renderFileList(listing);
+}
+
 /* ---------- print / export PDF ---------- */
 
 let printCleanupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1444,6 +1541,7 @@ async function runUpdateCheck(manual: boolean): Promise<void> {
 async function setupListeners(): Promise<void> {
   await listen<string>("open-file", (event) => void openPath(event.payload));
   await listen<string>("file-changed", (event) => handleFileChanged(event.payload));
+  await listen<null>("folder-changed", () => handleFolderChanged());
 
   await listen<string>("menu-action", (event) => {
     switch (event.payload) {
@@ -1764,6 +1862,14 @@ async function boot(): Promise<void> {
     schedulePreviewUpdate();
     updateStatusCursor();
     if (editorSearch.isOpen()) editorSearch.refresh();
+  });
+  editorEl.addEventListener("paste", (ev) => {
+    const files = Array.from(ev.clipboardData?.files ?? []).filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (files.length === 0) return; // regular text paste keeps default behavior
+    ev.preventDefault();
+    void pasteImages(files);
   });
   editorEl.addEventListener("keydown", (ev) => {
     if (ev.key === "Tab") {

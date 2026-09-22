@@ -74,4 +74,7 @@ export const dict: Record<string, string> = {
   replacePlaceholder: "Substituir com",
   replaceBtn: "Substituir",
   replaceAllBtn: "Substituir tudo",
+  pasteImageNeedsSave: "Salve o arquivo antes de colar imagens",
+  pasteImageFailed: "não foi possível salvar a imagem colada",
+  pasteImageTooLarge: "imagem grande demais para colar",
 };

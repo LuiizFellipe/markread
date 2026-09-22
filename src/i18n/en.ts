@@ -74,4 +74,7 @@ export const dict = {
   replacePlaceholder: "Replace with",
   replaceBtn: "Replace",
   replaceAllBtn: "Replace all",
+  pasteImageNeedsSave: "Save the file before pasting images",
+  pasteImageFailed: "could not save pasted image",
+  pasteImageTooLarge: "image too large to paste",
 };
