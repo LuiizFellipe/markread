@@ -822,7 +822,7 @@ body.resizing {
 }
 
 #editor {
-  flex: 1 1 50%;
+  flex: 0 0 var(--split-editor, 50%);
   min-width: 0;
   box-sizing: border-box;
   padding: 24px 32px 120px;
@@ -843,11 +843,33 @@ body.resizing {
   display: none;
 }
 
+/* Drag handle between source and preview; draws the separator line itself,
+   so the preview pane needs no border of its own. */
+#editor-split-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 2;
+}
+
+#editor-split-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: var(--border);
+}
+
+#editor-split-resizer:hover::after,
+#editor-split-resizer.dragging::after {
+  inset: 0 1.5px;
+  background: var(--accent);
+}
+
 #editor-preview-scroll {
-  flex: 1 1 50%;
+  flex: 1 1 0;
   min-width: 0;
   overflow-y: auto;
-  border-left: 1px solid var(--border);
   background: var(--bg);
 }
 

@@ -24,6 +24,7 @@ import {
   restoreScroll,
   type ScrollSnapshot,
 } from "./scroll";
+import { attachDragResize } from "./resizer";
 
 /* Scope the dark GitHub stylesheet under html[data-theme="dark"] so the manual
    theme toggle (not prefers-color-scheme) decides which palette applies. */
@@ -74,6 +75,8 @@ const progressEl = $<HTMLElement>("#reading-progress");
 const backToTop = $<HTMLButtonElement>("#back-to-top");
 const editorArea = $<HTMLElement>("#editor-area");
 const editorToolbar = $<HTMLElement>("#editor-toolbar");
+const editorSplit = $<HTMLElement>("#editor-split");
+const splitResizer = $<HTMLElement>("#editor-split-resizer");
 const editorPreviewEl = $<HTMLElement>("#editor-preview");
 const editorPreviewScroll = $<HTMLElement>("#editor-preview-scroll");
 const groupOutline = $<HTMLElement>("#group-outline");
@@ -1037,34 +1040,62 @@ function setupSidebarResize(): void {
   const saved = raw === null ? NaN : Number(raw);
   applySidebarWidth(Number.isFinite(saved) ? saved : SIDEBAR_WIDTH_DEFAULT, false);
 
-  let dragging = false;
-  sidebarResizer.addEventListener("pointerdown", (ev) => {
-    dragging = true;
-    sidebarResizer.classList.add("dragging");
-    sidebarResizer.setPointerCapture(ev.pointerId);
-    document.body.classList.add("resizing");
+  attachDragResize(sidebarResizer, {
+    onMove: (ev) => {
+      // Live update is visual only; persisting on every move would hammer
+      // localStorage ~60×/s.
+      applySidebarWidth(ev.clientX, false);
+    },
+    onEnd: () => {
+      const width = parseInt(
+        document.documentElement.style.getPropertyValue("--sidebar-width"),
+        10,
+      );
+      if (Number.isFinite(width)) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    },
   });
-  sidebarResizer.addEventListener("pointermove", (ev) => {
-    if (!dragging) return;
-    // Live update is visual only; persisting on every move would hammer
-    // localStorage ~60×/s.
-    applySidebarWidth(ev.clientX, false);
-  });
-  const endDrag = () => {
-    if (!dragging) return;
-    dragging = false;
-    sidebarResizer.classList.remove("dragging");
-    document.body.classList.remove("resizing");
-    const width = parseInt(
-      document.documentElement.style.getPropertyValue("--sidebar-width"),
-      10,
-    );
-    if (Number.isFinite(width)) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
-  };
-  sidebarResizer.addEventListener("pointerup", endDrag);
-  sidebarResizer.addEventListener("pointercancel", endDrag);
   sidebarResizer.addEventListener("dblclick", () => {
     applySidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+  });
+}
+
+/* ---------- editor: split source/preview resize ---------- */
+
+const SPLIT_KEY = "markread.editor-split";
+const SPLIT_DEFAULT = 50;
+const SPLIT_MIN = 20;
+const SPLIT_MAX = 80;
+
+function applySplitRatio(ratio: number, persist = true): void {
+  const clamped = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, Math.round(ratio * 10) / 10));
+  document.documentElement.style.setProperty("--split-editor", `${clamped}%`);
+  if (persist) localStorage.setItem(SPLIT_KEY, String(clamped));
+}
+
+function currentSplitRatio(): number {
+  const raw = parseInt(
+    document.documentElement.style.getPropertyValue("--split-editor"),
+    10,
+  );
+  return Number.isFinite(raw) ? raw : SPLIT_DEFAULT;
+}
+
+function setupEditorSplitResize(): void {
+  const raw = Number(localStorage.getItem(SPLIT_KEY));
+  applySplitRatio(Number.isFinite(raw) ? raw : SPLIT_DEFAULT, false);
+
+  attachDragResize(splitResizer, {
+    onMove: (ev) => {
+      const rect = editorSplit.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      applySplitRatio(((ev.clientX - rect.left) / rect.width) * 100, false);
+    },
+    onEnd: () => {
+      localStorage.setItem(SPLIT_KEY, String(currentSplitRatio()));
+    },
+  });
+  splitResizer.addEventListener("dblclick", () => {
+    applySplitRatio(SPLIT_DEFAULT);
   });
 }
 
@@ -1531,6 +1562,7 @@ async function boot(): Promise<void> {
   };
   syncSidebarButtonTitles();
   setupSidebarResize();
+  setupEditorSplitResize();
   $<HTMLButtonElement>("#zoom-in-btn").addEventListener("click", () => changeZoom(0.1));
   $<HTMLButtonElement>("#zoom-out-btn").addEventListener("click", () => changeZoom(-0.1));
   $<HTMLButtonElement>("#zoom-reset-btn").addEventListener("click", () => {
