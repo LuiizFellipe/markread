@@ -30,7 +30,6 @@ export interface Tab {
    *  null means "fall back to the persisted reading position". */
   scroll: ScrollSnapshot | null;
   editorScrollTop: number;
-  previewScrollTop: number;
 }
 
 export interface TabView {

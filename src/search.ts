@@ -17,6 +17,9 @@ export function initSearch(
   findbar: HTMLElement,
   input: HTMLInputElement,
   countEl: HTMLElement,
+  /** Guards against the shared findbar being driven in the other mode
+   *  (the editor search owns it while editing). */
+  isActive: () => boolean = () => true,
 ): SearchController {
   let matches: HTMLElement[] = [];
   let current = -1;
@@ -115,10 +118,12 @@ export function initSearch(
   }
 
   input.addEventListener("input", () => {
+    if (!isActive()) return;
     window.clearTimeout(debounce);
     debounce = window.setTimeout(() => findMatches(input.value.trim()), 150);
   });
   input.addEventListener("keydown", (ev) => {
+    if (!isActive()) return;
     if (ev.key === "Enter") {
       ev.preventDefault();
       step(ev.shiftKey ? -1 : 1);

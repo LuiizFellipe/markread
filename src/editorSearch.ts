@@ -22,6 +22,8 @@ export interface EditorSearchDeps {
   replaceInput: HTMLInputElement;
   replaceOneBtn: HTMLButtonElement;
   replaceAllBtn: HTMLButtonElement;
+  /** Guards against the shared findbar being driven in the other mode. */
+  isActive: () => boolean;
   /** Buffer edits go through the shared undo-preserving replace path. */
   replaceRange: (start: number, end: number, text: string) => void;
 }
@@ -34,17 +36,19 @@ export function initEditorSearch(deps: EditorSearchDeps): EditorSearchController
   let openFlag = false;
 
   /** Case-insensitive, non-overlapping matches — the same semantics as the
-   *  rendered-page search, but as buffer offsets. */
+   *  rendered-page search, but as buffer offsets. A regex is used instead
+   *  of toLowerCase() because regex folding is length-preserving: offsets
+   *  found in the haystack always align with the original buffer (full
+   *  lowercase mapping can change UTF-16 lengths, e.g. U+0130). */
   function computeMatches(): Array<[number, number]> {
     const query = findInput.value;
     if (!query) return [];
-    const needle = query.toLowerCase();
-    const haystack = editor.value.toLowerCase();
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(escaped, "gi");
+    const value = editor.value;
     const result: Array<[number, number]> = [];
-    let at = haystack.indexOf(needle);
-    while (at !== -1) {
-      result.push([at, at + needle.length]);
-      at = haystack.indexOf(needle, at + needle.length);
+    for (let m = re.exec(value); m !== null; m = re.exec(value)) {
+      result.push([m.index, m.index + m[0].length]);
     }
     return result;
   }
@@ -173,10 +177,12 @@ export function initEditorSearch(deps: EditorSearchDeps): EditorSearchController
   }
 
   findInput.addEventListener("input", () => {
+    if (!deps.isActive()) return;
     window.clearTimeout(debounce);
     debounce = window.setTimeout(refresh, 150);
   });
   findInput.addEventListener("keydown", (ev) => {
+    if (!deps.isActive()) return;
     if (ev.key === "Enter") {
       ev.preventDefault();
       step(ev.shiftKey ? -1 : 1);
@@ -186,6 +192,7 @@ export function initEditorSearch(deps: EditorSearchDeps): EditorSearchController
     }
   });
   replaceInput.addEventListener("keydown", (ev) => {
+    if (!deps.isActive()) return;
     if (ev.key === "Enter") {
       ev.preventDefault();
       replaceOne();

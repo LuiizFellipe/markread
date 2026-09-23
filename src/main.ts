@@ -96,7 +96,8 @@ const updateBannerText = $<HTMLElement>("#update-banner-text");
 const updateOpenBtn = $<HTMLButtonElement>("#update-open");
 const updateCloseBtn = $<HTMLButtonElement>("#update-close");
 
-const search = initSearch(bodyEl, findbar, findInput, findCount);
+const search = initSearch(bodyEl, findbar, findInput, findCount, () => !isEditing);
+let editorFindTimer: ReturnType<typeof setTimeout> | null = null;
 const editorSearch = initEditorSearch({
   editor: editorEl,
   findbar,
@@ -106,6 +107,7 @@ const editorSearch = initEditorSearch({
   replaceInput,
   replaceOneBtn,
   replaceAllBtn,
+  isActive: () => isEditing,
   replaceRange: (start, end, text) => editorReplace(start, end, text),
 });
 const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings, bodyEl);
@@ -113,6 +115,7 @@ const updateScrollSpy = initScrollSpy(scrollPane, outlineEl, () => headings, bod
 /** Ctrl+F (and the sidebar/menu Find) route to whichever search makes sense
  *  for the active mode: rendered page in reading, buffer in editing. */
 function openFind(withReplace = false): void {
+  if (!currentFile) return;
   if (isEditing) editorSearch.open(withReplace);
   else search.open();
 }
@@ -134,6 +137,9 @@ let hasMermaid = false;
 /** Bumped on every committed render; async render pipelines abort after
  *  each await when theirs is no longer the newest generation. */
 let renderGeneration = 0;
+/** The generation whose render is actually in the DOM — a scroll snapshot
+ *  is only trustworthy when it matches the current generation. */
+let renderedGeneration = -1;
 
 interface FileEntry {
   path: string;
@@ -212,7 +218,6 @@ function createTabForFile(file: FileInfo): Tab {
     editSeq: 0,
     scroll: null,
     editorScrollTop: 0,
-    previewScrollTop: 0,
   };
 }
 
@@ -326,6 +331,7 @@ async function renderDocument(content: string, dir: string): Promise<void> {
   headings = collectHeadings(bodyEl);
   renderOutline(outlineEl, headings, t("outlineEmpty"), bodyEl);
   updateScrollSpy();
+  renderedGeneration = renderGeneration;
 }
 
 /** Link behavior shared by the reading view and the editor preview. */
@@ -336,22 +342,53 @@ const documentLinkHandlers = {
 
 /* ---------- clickable task checkboxes + wiki links (reading mode) ---------- */
 
-/** All task markers in the source, in document order — the same order the
- *  renderer used when assigning data-task-index to the checkboxes. */
-const TASK_MARKER_RE = /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/gm;
+/** All toggleable task markers, in document order — the same order the
+ *  renderer used when assigning data-task-index to the checkboxes.
+ *  Blockquote prefixes are part of the marker (they render checkboxes);
+ *  fenced code is masked out before counting because the renderer never
+ *  checkboxes those lines. */
+const TASK_MARKER_RE = /^([ \t]*(?:>[ \t]*)*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/gm;
+
+/** Replace fenced (``` / ~~~) lines with same-length space runs, so match
+ *  offsets in the masked copy are also valid offsets in the real source. */
+function maskFencedLines(content: string): string {
+  let fenceChar = "";
+  let fenceLen = 0;
+  return content
+    .split("\n")
+    .map((line) => {
+      const open = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fenceChar) {
+        if (open && open[1][0] === fenceChar && open[1].length >= fenceLen) {
+          fenceChar = "";
+        }
+        return " ".repeat(line.length);
+      }
+      if (open) {
+        fenceChar = open[1][0];
+        fenceLen = open[1].length;
+      }
+      return line;
+    })
+    .join("\n");
+}
 
 function toggleTaskMarker(content: string, index: number): string | null {
-  let seen = 0;
-  let found = false;
-  const updated = content.replace(
-    TASK_MARKER_RE,
-    (full: string, head: string, mark: string, tail: string) => {
-      if (seen++ !== index) return full;
-      found = true;
-      return `${head}${mark === " " ? "x" : " "}${tail}`;
-    },
-  );
-  return found ? updated : null;
+  const masked = maskFencedLines(content);
+  const marks: Array<{ start: number; end: number; char: string }> = [];
+  TASK_MARKER_RE.lastIndex = 0;
+  for (
+    let match = TASK_MARKER_RE.exec(masked);
+    match !== null;
+    match = TASK_MARKER_RE.exec(masked)
+  ) {
+    const markStart = match.index + match[1].length;
+    marks.push({ start: markStart, end: markStart + 1, char: match[2] });
+  }
+  const target = marks[index];
+  if (!target) return null;
+  const flipped = target.char === " " ? "x" : " ";
+  return content.slice(0, target.start) + flipped + content.slice(target.end);
 }
 
 async function toggleTaskInDocument(index: number): Promise<void> {
@@ -412,7 +449,14 @@ function matchWorkspaceFile(target: string): string | null {
       continue;
     }
     first ??= file.path;
-    if (currentDir && file.path.toLowerCase().startsWith(currentDir)) {
+    // The separator check keeps /ws/notes2 from matching a /ws/notes file.
+    const path = file.path.toLowerCase();
+    if (
+      currentDir &&
+      path.startsWith(currentDir) &&
+      path.length > currentDir.length &&
+      /[/\\]/.test(path[currentDir.length])
+    ) {
       return file.path;
     }
   }
@@ -1165,9 +1209,10 @@ function stashActiveTab(): void {
   tab.buffer = isEditing ? editorEl.value : null;
   if (isEditing) {
     tab.editorScrollTop = editorEl.scrollTop;
-    tab.previewScrollTop = editorPreviewScroll.scrollTop;
     tab.scroll = null;
-  } else if (!bodyEl.hidden) {
+  } else if (!bodyEl.hidden && renderedGeneration === renderGeneration) {
+    // Only capture scroll when the DOM actually belongs to this tab's
+    // document — mid-activation switches would snapshot the other doc.
     tab.scroll = currentScrollSnapshot();
   }
 }
@@ -1208,12 +1253,19 @@ async function activateTab(id: number): Promise<void> {
     bodyEl.hidden = true;
     showEditorArea();
     backToTop.classList.remove("visible");
+    // The file watcher is a single resource pointed at the active document:
+    // re-arm it, or external changes to this buffer would go unnoticed.
+    if (inTauri && !isUntitled && currentFile.path) {
+      void invoke("watch_file", { path: currentFile.path }).catch(() => {});
+    }
     void updateEditorPreview();
     editorEl.scrollTop = target.editorScrollTop;
-    editorPreviewScroll.scrollTop = target.previewScrollTop;
     editorEl.focus();
     updateStatus();
     updateStatusCursor();
+    // Surface external changes that landed while this tab was in the
+    // background; while editing this only ever hints, never clobbers.
+    if (inTauri && !isUntitled) void reloadCurrentFile();
   } else {
     let saved: ReadingPosition | null = null;
     if (!target.scroll && !isUntitled && inTauri) {
@@ -1311,11 +1363,14 @@ function persistSession(): void {
   if (!inTauri) return;
   if (sessionTimer) clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => {
-    const paths = tabs.filter((tab) => !tab.untitled).map((tab) => tab.file.path);
-    const index = tabs.findIndex((tab) => tab.id === activeTabId);
+    const named = tabs.filter((tab) => !tab.untitled);
+    const paths = named.map((tab) => tab.file.path);
+    // The index is over the restored (named) set, not the full tab strip —
+    // untitled tabs never come back from a session.
+    const active = named.findIndex((tab) => tab.id === activeTabId);
     void invoke("set_session", {
       openTabs: paths,
-      activeTab: index === -1 ? 0 : index,
+      activeTab: active === -1 ? 0 : active,
     }).catch(() => {});
   }, 300);
 }
@@ -1536,7 +1591,6 @@ async function createNewFile(): Promise<void> {
     editSeq: 0,
     scroll: null,
     editorScrollTop: 0,
-    previewScrollTop: 0,
   };
   tabs.push(tab);
   renderTabbar();
@@ -2115,7 +2169,10 @@ async function boot(): Promise<void> {
     markDirty();
     schedulePreviewUpdate();
     updateStatusCursor();
-    if (editorSearch.isOpen()) editorSearch.refresh();
+    if (editorSearch.isOpen()) {
+      if (editorFindTimer) clearTimeout(editorFindTimer);
+      editorFindTimer = window.setTimeout(() => editorSearch.refresh(), 150);
+    }
   });
   editorEl.addEventListener("paste", (ev) => {
     const files = Array.from(ev.clipboardData?.files ?? []).filter((f) =>

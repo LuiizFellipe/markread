@@ -251,11 +251,15 @@ export function enhanceRendered(
 
   // Document order == order of task markers in the source, which is what
   // makes the index-based toggle in main.ts map back to the right line.
-  container.querySelectorAll('input[type="checkbox"]').forEach((checkbox, index) => {
-    const input = checkbox as HTMLInputElement;
-    input.dataset.taskIndex = String(index);
-    if (options.disableTasks) input.disabled = true;
-  });
+  // Only plugin-produced checkboxes count — raw <input> HTML in the source
+  // must not shift the mapping.
+  container
+    .querySelectorAll('input[type="checkbox"].task-list-item-checkbox')
+    .forEach((checkbox, index) => {
+      const input = checkbox as HTMLInputElement;
+      input.dataset.taskIndex = String(index);
+      if (options.disableTasks) input.disabled = true;
+    });
 
   container.querySelectorAll("img").forEach((img) => {
     const src = img.getAttribute("src") ?? "";

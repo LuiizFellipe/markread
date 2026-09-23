@@ -112,12 +112,22 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 /// Persist a pasted clipboard image next to the document. Bytes arrive as
 /// base64 (the IPC is JSON), the name is generated server-side
 /// (`pasted-image`, `-2`, `-3`… on collision) and the extension is
-/// whitelisted, so the frontend never crafts a path.
+/// whitelisted, so the frontend never crafts a path. Async so the
+/// decode + write never block the main thread.
 #[tauri::command]
-pub fn save_clipboard_image(dir: String, data: String, ext: String) -> Result<SavedImage, String> {
+pub async fn save_clipboard_image(
+    dir: String,
+    data: String,
+    ext: String,
+) -> Result<SavedImage, String> {
     let ext = ext.to_ascii_lowercase();
     if !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         return Err(format!("unsupported image format: {ext}"));
+    }
+    // Reject oversized payloads before the base64 decode allocates ~3/4 of
+    // the input size.
+    if data.len() > MAX_IMAGE_BYTES / 3 * 4 + 4 {
+        return Err(format!("image payload too large: {} bytes", data.len()));
     }
     let base = PathBuf::from(&dir);
     if !base.is_dir() {
@@ -582,6 +592,7 @@ pub fn set_last_folder(app: AppHandle, path: Option<String>) {
 pub fn set_session(app: AppHandle, open_tabs: Vec<String>, active_tab: usize) {
     settings::update(&app, |app_settings| {
         app_settings.open_tabs = open_tabs;
+        app_settings.open_tabs.truncate(20);
         app_settings.active_tab = active_tab;
     });
 }
@@ -614,9 +625,14 @@ pub fn resolve_wiki_link(base_dir: String, target: String) -> Option<String> {
         return None;
     }
     // Windows canonical paths carry a `\\?\` prefix no other command
-    // produces; strip it so paths round-trip through recents/highlight.
+    // produces; strip it (restoring the `\\` of UNC shares) so paths
+    // round-trip through recents/highlight.
     let text = canonical.to_string_lossy();
-    Some(text.strip_prefix(r"\\?\").unwrap_or(&text).to_string())
+    let clean = match text.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => format!(r"\\{rest}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_string(),
+    };
+    Some(clean)
 }
 
 #[cfg(test)]
