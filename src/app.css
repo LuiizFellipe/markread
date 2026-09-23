@@ -531,7 +531,8 @@ body.resizing {
   margin: 4px 10px 0;
 }
 
-/* Footer: theme segmented control + language */
+/* Footer: single settings (gear) button opening a popover with theme +
+   language — keeps the chrome minimal until more settings show up. */
 
 #side-footer {
   margin-top: auto;
@@ -539,7 +540,76 @@ body.resizing {
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 8px;
+  position: relative;
+}
+
+#settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+#settings-btn:hover,
+#settings-btn.open {
+  background: var(--accent-soft);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+#settings-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Popover opens upward from the footer, inside the sidebar's padding box.
+   Shrink-to-fit width: a fixed min-width would overflow the sidebar at its
+   220px minimum and spawn a horizontal scrollbar. */
+#settings-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+#settings-menu[hidden] {
+  display: none;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-label {
+  flex: 0 0 auto;
+  min-width: 64px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 #theme-segment {

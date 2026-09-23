@@ -78,4 +78,7 @@ export const dict = {
   pasteImageFailed: "could not save pasted image",
   pasteImageTooLarge: "image too large to paste",
   closeTab: "Close tab",
+  settings: "Settings",
+  themeLabel: "Theme",
+  languageLabel: "Language",
 };

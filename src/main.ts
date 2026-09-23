@@ -91,6 +91,8 @@ const fileListEl = $<HTMLElement>("#file-list");
 const zoomLabel = $<HTMLElement>("#zoom-label");
 const langSelect = $<HTMLSelectElement>("#lang-select");
 const themeSegment = $<HTMLElement>("#theme-segment");
+const settingsBtn = $<HTMLButtonElement>("#settings-btn");
+const settingsMenu = $<HTMLElement>("#settings-menu");
 const updateBanner = $<HTMLElement>("#update-banner");
 const updateBannerText = $<HTMLElement>("#update-banner-text");
 const updateOpenBtn = $<HTMLButtonElement>("#update-open");
@@ -269,6 +271,15 @@ function syncThemeSegment(): void {
   themeSegment.querySelectorAll<HTMLButtonElement>("button[data-theme-pref]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.themePref === current);
   });
+}
+
+/* ---------- settings popover (gear in the sidebar footer) ---------- */
+
+function toggleSettingsMenu(open?: boolean): void {
+  const show = open ?? settingsMenu.hidden;
+  settingsMenu.hidden = !show;
+  settingsBtn.classList.toggle("open", show);
+  settingsBtn.setAttribute("aria-expanded", show ? "true" : "false");
 }
 
 /* ---------- status ---------- */
@@ -2100,6 +2111,18 @@ async function boot(): Promise<void> {
     });
   });
   syncThemeSegment();
+  settingsBtn.addEventListener("click", () => toggleSettingsMenu());
+  // Click-away and Esc close the popover; clicks inside it (theme buttons,
+  // language select) must not.
+  document.addEventListener("click", (ev) => {
+    if (settingsMenu.hidden) return;
+    const target = ev.target as HTMLElement;
+    if (target.closest("#settings-menu") || target.closest("#settings-btn")) return;
+    toggleSettingsMenu(false);
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !settingsMenu.hidden) toggleSettingsMenu(false);
+  });
   langSelect.addEventListener("change", () => {
     const lang = langSelect.value as Lang;
     if (inTauri) {

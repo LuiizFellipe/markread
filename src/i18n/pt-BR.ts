@@ -78,4 +78,7 @@ export const dict: Record<string, string> = {
   pasteImageFailed: "não foi possível salvar a imagem colada",
   pasteImageTooLarge: "imagem grande demais para colar",
   closeTab: "Fechar aba",
+  settings: "Configurações",
+  themeLabel: "Tema",
+  languageLabel: "Idioma",
 };
